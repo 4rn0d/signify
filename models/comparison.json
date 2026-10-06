@@ -1,0 +1,20 @@
+{
+  "cnn": {
+    "val_accuracy": 0.8722,
+    "best_epoch": 3,
+    "epochs_run": 8,
+    "params": 1145564
+  },
+  "landmark": {
+    "val_accuracy": 0.9354,
+    "best_epoch": 8,
+    "epochs_run": 13,
+    "params": 60892
+  },
+  "fusion": {
+    "val_accuracy": 0.9373,
+    "best_epoch": 4,
+    "epochs_run": 9,
+    "params": 1229340
+  }
+}

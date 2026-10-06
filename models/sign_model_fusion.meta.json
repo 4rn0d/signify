@@ -1,0 +1,20 @@
+{
+  "created": "2026-09-24T21:06:42-04:00",
+  "model": "fusion (image + landmarks)",
+  "split": "temporal (grouped by frame index)",
+  "inputs": {
+    "image": "64x64x3, segmente sur fond blanc, /255",
+    "landmarks": "63 = 21 points x (x, y, z) en ESPACE PIXEL, normalises poignet-origine et echelle unitaire"
+  },
+  "val_accuracy": 0.9373,
+  "best_epoch": 4,
+  "epochs_run": 9,
+  "train_samples": 53563,
+  "val_samples": 9505,
+  "num_classes": 28,
+  "img_size": 64,
+  "compared_with": {
+    "cnn_only": 0.8722,
+    "landmark_only": 0.9354
+  }
+}

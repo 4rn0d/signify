@@ -12,9 +12,11 @@ data/landmarks/*
 # Artefacts entraines - regeneres par src/train.py (~11 min)
 # class_names.json est garde : petit et utile comme metadonnee.
 # ---------------------------------------------------------------
-models/*.keras
-models/*.tflite
-models/*.h5
+# Motifs sans prefixe de dossier : "models/*.keras" ne descend pas dans
+# les sous-dossiers et laisserait passer models/archive/*.keras (18 Mo).
+*.keras
+*.tflite
+*.h5
 
 # Modele MediaPipe : re-telecharge automatiquement par HandSegmenter
 models/hand_landmarker.task

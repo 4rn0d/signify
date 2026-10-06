@@ -1,0 +1,15 @@
+{
+  "created": "2026-09-24T20:05:03-04:00",
+  "git_commit": "875f08c",
+  "split": "temporal (grouped by frame index)",
+  "split_note": "Les images de validation sont les dernieres frames de chaque classe. Un decoupage aleatoire donnerait un score gonfle (0.9938 mesure) car les frames voisines sont quasi identiques.",
+  "val_accuracy": 0.8357,
+  "best_epoch": 6,
+  "epochs_run": 11,
+  "epochs_max": 40,
+  "train_images": 57529,
+  "val_images": 14401,
+  "num_classes": 28,
+  "img_size": 64,
+  "batch_size": 32
+}
