@@ -1,18 +1,25 @@
-# Signify — findings
+# Signify — alphabet phase findings
 
-Record of what was broken, what was measured, and what the numbers mean.
-Every figure here was measured on this machine against this dataset.
+Complete record of the ASL **alphabet** (fingerspelling) work: what was
+broken, what was measured, what helped, and what didn't. This phase is
+closed — word-level recognition is a different problem and starts fresh.
 
-Dataset: ASL Alphabet, 28 classes, 71,930 segmented images.
+Every figure was measured on this machine against this dataset. Numbers that
+are not comparable to each other are marked as such.
+
+Dataset: ASL Alphabet, 28 classes, 84,000 raw images.
 Environment: TensorFlow 2.21, Keras 3.15.1, Python 3.11, CPU only
 (TF has no GPU support on native Windows since 2.11).
+
+**Final state:** fusion model (image + landmarks, mirror-augmented),
+val_accuracy **0.9277**, works with either hand, runs at ~34 fps.
 
 ---
 
 ## 1. Training was broken
 
-Three separate bugs in `src/data_loader.py`. The first stopped training
-outright; the other two would have wasted the run silently.
+Three bugs in `src/data_loader.py`. The first stopped training outright; the
+other two would have wasted the run silently.
 
 ### 1.1 Mismatched label formats — hard crash
 
@@ -38,36 +45,33 @@ RandomBrightness(0.15) -> 0.000 .. 39.164  (mean 15.956)   <- destroyed
 RandomContrast(0.15)   -> 0.000 .. 1.050   (mean 0.500)    <- fine
 ```
 
-Training images were flattened to near-uniform values while validation
-images stayed clean. Fixed with `value_range=(0.0, 1.0)`.
+Training images were flattened to near-uniform values while validation images
+stayed clean. Fixed with `value_range=(0.0, 1.0)`.
 
 ### 1.3 Cache exceeded available RAM and froze the shuffle
 
 `.cache()` sat after the float32 rescale: 2.83 GB (train) + 0.71 GB (val)
-against 2.9 GB free. The cache now holds `uint8` ahead of normalisation
-(0.88 GB for both splits).
+against 2.9 GB free. It now caches `uint8` ahead of normalisation (0.88 GB).
 
-`.cache()` also freezes whatever order it receives, so every epoch replayed
-an identical batch sequence:
+`.cache()` also freezes whatever order it receives, so every epoch replayed an
+identical batch sequence:
 
 ```
 shuffle -> cache: [3, 8, 14, 19, ...] / [3, 8, 14, 19, ...]   frozen
 cache -> shuffle: [17, 1, 3, 16, ...] / [10, 1, 3, 17, ...]   reshuffles
 ```
 
-A `.shuffle()` after the cache restores per-epoch reshuffling.
-
 ---
 
-## 2. The webcam demo contradicted its own training data
+## 2. The demo contradicted its own training data
 
-The training set is hand-on-**white-background**, produced by
+Training images are hands on a **white background**, produced by
 `HandSegmenter.process()` (GrabCut). Measured on the files: corner pixels
 average 254.7/255, and 43-75% of every image is near-white.
 
 `webcam_demo.py` never called `HandSegmenter`. It cropped the raw frame and
-padded with black, so the model received real background where it was
-trained to see white.
+padded with black, so the model received real background where it was trained
+to see white.
 
 Same 336 images, same model, only preprocessing differs:
 
@@ -76,8 +80,8 @@ SEGMENTED (white bg)  -> 331/336 = 0.985   <- what training saw
 RAW       (real bg)   -> 129/336 = 0.384   <- what the demo fed it
 ```
 
-The demo now runs the same chain as `prepare_segmented_dataset.py`.
-After the fix, raw frames score **0.947**.
+The demo now runs the same chain as `prepare_segmented_dataset.py`. After the
+fix, raw frames score **0.947**.
 
 A second bug: `MODEL_PATH = "../models/sign_model.keras"` only resolved when
 launched from inside `src/`. Paths now derive from `__file__`.
@@ -88,8 +92,6 @@ launched from inside `src/`. Paths now derive from `__file__`.
 
 ### 3.1 `model.predict()` costs 36 ms on a single frame
 
-`predict()` is built for large batches and carries heavy per-call overhead:
-
 | call | time | speedup |
 |---|---|---|
 | `model.predict()` | 36.51 ms | 1x |
@@ -98,7 +100,7 @@ launched from inside `src/`. Paths now derive from `__file__`.
 | **TFLite (4 threads)** | **0.38 ms** | **96x** |
 
 TFLite output is numerically identical — max absolute difference **4.9e-11**.
-Model size drops 13.8 MB to 4.6 MB.
+Model size drops 13.8 MB -> 4.6 MB.
 
 ### 3.2 GrabCut ran at pointless resolution
 
@@ -115,8 +117,8 @@ NEW code, realtime args (demo)         169/180 = 0.939
 ```
 
 Identical accuracy, roughly half the time. `HandSegmenter` defaults are
-unchanged so `prepare_segmented_dataset.py` stays reproducible; the demo
-opts in via `GRABCUT_REALTIME`.
+unchanged so dataset prep stays reproducible; the demo opts in via
+`GRABCUT_REALTIME`.
 
 ### 3.3 Result
 
@@ -139,7 +141,7 @@ identical pixels :  9/38
 ```
 
 OpenCV seeds GrabCut's GMM k-means randomly. Byte-equality is therefore the
-wrong regression test — use statistical equivalence (section 3.2). Some live
+wrong regression test — use statistical equivalence (3.2). Some live
 prediction flicker is inherent and cannot be fixed by threshold or model.
 
 ---
@@ -169,14 +171,15 @@ Same model, same epochs, same augmentation — only the split changes:
 | random (original) | 0.9938 |
 | temporal holdout | **0.8277** |
 
-The ~17 point gap is leakage.
+The ~17 point gap is leakage. `data_loader.py` now splits by frame index
+(first 80% of each class train, last 20% val).
 
 ### 4.3 The leak also hid genuine overfitting
 
 Under the fair split, validation accuracy reaches 0.81 in epoch 1 and then
-stalls for fourteen epochs while train loss keeps falling and val_loss
-climbs 0.61 to 1.49. The random split showed val_loss falling monotonically
-to 0.0216 and concealed this completely.
+stalls for fourteen epochs while train loss keeps falling and val_loss climbs
+0.61 -> 1.49. The random split showed val_loss falling monotonically to
+0.0216 and concealed this completely.
 
 ### 4.4 Official test set
 
@@ -200,35 +203,28 @@ regime.
 
 ## 5. Callbacks recovered 4.9 points immediately
 
-`EarlyStopping` and `ModelCheckpoint(save_best_only=True)` were added, both
-monitoring `val_accuracy` rather than `val_loss` — under the fair split
-val_loss rises from epoch 2 while val_accuracy keeps improving in bursts, so
-patience on val_loss stops too early.
-
-First run with the fixed split:
+`EarlyStopping` and `ModelCheckpoint(save_best_only=True)` both monitor
+`val_accuracy` rather than `val_loss` — under the fair split val_loss rises
+from epoch 2 while val_accuracy keeps improving in bursts, so patience on
+val_loss stops too early.
 
 ```
 ep 1  0.8015   ep 5  0.8206   ep  9  0.8140
-ep 2  0.8140   ep 6  0.8357 <- best
+ep 2  0.8140   ep 6  0.8357 <- best, saved
 ep 3  0.7705   ep 7  0.8339   ep 10  0.7859
 ep 4  0.7824   ep 8  0.8133   ep 11  0.7872 <- last, stopped here
 ```
 
-```
-SAVED model on the temporal val set: accuracy=0.8357
-  best epoch (6) : 0.8357
-  last epoch (11): 0.7872
-```
-
 Under the old code `model.save()` ran after the final epoch and would have
-shipped **0.7872**.
+shipped **0.7872** instead of **0.8357**.
 
 ---
 
 ## 6. Landmarks beat the CNN
 
-MediaPipe landmarks were extracted for the whole dataset
-(`src/landmark_extractor.py`, 8 worker processes):
+MediaPipe already computes 21 hand landmarks to find the crop box, then
+discards them. `src/landmark_extractor.py` extracts them for the dataset
+(8 worker processes):
 
 ```
 63,068 landmark sets from 71,930 images = 87.7%
@@ -238,27 +234,22 @@ Coordinates are normalised to wrist-origin at unit scale, without which the
 model learns where the hand sits in frame rather than its shape.
 
 Three models, **identical samples** (53,563 train / 9,505 val — those having
-both an image and landmarks), identical temporal split, identical callbacks:
+both an image and landmarks), identical temporal split and callbacks:
 
-| model | val_accuracy | best epoch | params |
-|---|---|---|---|
-| CNN only | 0.8722 | 3 | 1,145,564 |
-| Landmarks only | **0.9354** | 8 | **60,892** |
-| Fusion (image + landmarks) | **0.9431** | 9 | 1,229,340 |
+| model | val_accuracy | params |
+|---|---|---|
+| CNN only | 0.8722 | 1,145,564 |
+| Landmarks only | **0.9354** | **60,892** |
+| Fusion (image + landmarks) | 0.9373 | 1,229,340 |
 
-Restricting to shared samples matters: comparing fusion on 85% of the data
-against a CNN on 100% would confound two changes at once.
+Landmarks beat pixels by **6.3 points with 19x fewer parameters**. Fusion adds
+only 0.8 on top — and a second fusion run scored 0.9431, so the **run-to-run
+spread is ~0.58 points** and fusion's edge over landmarks alone is not
+established.
 
-### What this means
-
-Landmarks beat pixels by **6.3 points with 19x fewer parameters**. Fusion
-then adds only **0.8** on top. The headline is not "fusion helps" — it is
-that the CNN was the weak component.
-
-This is consistent with everything above. Pixel models on this dataset lean
-on session conditions — lighting, hand placement, camera auto-exposure —
-that do not survive into held-out frames. Landmark geometry has nothing to
-memorise.
+Pixel models on this dataset lean on session conditions — lighting, hand
+placement, camera auto-exposure — that do not survive into held-out frames.
+Landmark geometry has nothing to memorise.
 
 ### Cost to run live
 
@@ -266,60 +257,216 @@ memorise.
 |---|---|---|---|
 | CNN | 0.8722 | 1.15 M | yes (~20 ms/frame) |
 | Landmarks | 0.9354 | 0.06 M | **no** |
-| Fusion | 0.9431 | 1.23 M | yes |
+| Fusion | 0.9373 | 1.23 M | yes |
 
-The landmark model gives up 0.8 points and drops the entire segmentation
+The landmark model gives up ~0.8 points and drops the entire segmentation
 stage — the slowest part of the pipeline, the nondeterministic one, and the
-source of the bug in section 2.
+source of the bug in section 2. It remains the better choice if simplicity or
+speed ever matters more than the last point.
 
 ---
 
-## 7. Model provenance
+## 7. What did not help
 
-Two `.keras` files on disk are indistinguishable. `train.py` now writes
-`models/sign_model.meta.json` recording split, score, best epoch, sample
-counts and git commit, and `webcam_demo.py` prints it at startup:
+Four separate attempts to strengthen the image branch, all null. Recorded
+because each one is a direction not worth retrying.
+
+| lever | tried | result |
+|---|---|---|
+| architecture | 93k scratch CNN -> 2.3M MobileNetV2 (frozen, ImageNet) | 0.8722 -> 0.8712 |
+| fine-tuning | unfroze top third, 26 min at LR 1e-4 | 0.9455 -> 0.9406 (worse) |
+| resolution | regenerated dataset at 128px | 0.8722 -> 0.8741 |
+| — | all deltas | within the ±0.6 noise floor |
+
+### Transfer learning
+
+Frozen MobileNetV2 matched the scratch CNN exactly (0.8712 vs 0.8722) despite
+24x the parameters. Fine-tuning made it slightly worse. Both numbers sit
+inside the noise band.
+
+One genuine mistake on the way: the first fusion attempt concatenated a
+1280-d image embedding with 63 landmark values. With 95% of the input width
+being image, the landmark signal was swamped and the result (0.8739) fell
+*below* landmarks alone. Summarising each branch to comparable width first
+(image 128, landmarks 64) fixed it — 0.9455. **Fusion needs balanced
+branches; naive concatenation is not fusion.**
+
+### Resolution
+
+The 128px dataset changed nothing:
 
 ```
-Modele : split=temporal (grouped by frame index) | val_accuracy=0.8357 | epoch 6/11 | 2026-09-24T20:05:03-04:00
+                                        64px      128px     delta
+  Landmarks only (control)            0.9354     0.9417     +0.63
+  CNN from scratch                    0.8722     0.8741     +0.19
+  MobileNetV2 frozen + landmarks      0.9455     0.9493     +0.38
 ```
 
-The superseded random-split model is kept in `models/archive/` with its own
-sidecar recording `val_accuracy: 0.9938`, `val_accuracy_is_inflated: true`,
-`honest_estimate: 0.8277`.
+The landmarks-only control takes **identical input** in both runs, so its
++0.63 drift is pure noise — and every other delta is smaller than that. The
+ceiling is in the data, not the model.
+
+### But the regeneration did find a real bug
+
+`prepare_segmented_dataset.py` sorted filenames **lexicographically**
+(`L1, L10, L100, L1000`), which scrambles temporal order. Since
+`HandSegmenter` runs in `RunningMode.VIDEO`, it was carrying tracking state
+between frames that are not adjacent in time. Sorting by frame index:
+
+```
+71,930 images (85.6% success) -> 78,911 images (93.9%)   +9.7%
+```
+
+The script is also parallel now — **by class, not by image**, so each worker
+walks one class in frame order and the video tracking continuity is
+preserved. Splitting by image would have produced a *worse* dataset.
 
 ---
 
-## 8. Housekeeping
+## 8. One hand only — and the fix
 
-- Three byte-identical copies of `hand_landmarker.task` (md5 `15318430ea38...`,
-  7.5 MB each); only `models/` is referenced. Removed two.
-- Removed an empty `notebooks/exploration.ipynb` (0 bytes, invalid JSON).
-- Added `.gitignore` — `data/` alone is 1.5 GB and nothing was ignored.
-- **28 MB** freed; tracked set is 20 files, largest 20 KB.
+The dataset is filmed almost entirely with one hand:
+
+```
+MediaPipe handedness across raw training images:  Right 61, Left 3
+```
+
+The demo mirrors the camera (`cv2.flip`), so a user's **left** hand appears
+right-handed to the model — which is why only that hand worked.
+
+Measured on validation, with mirrored images and mirrored landmarks:
+
+| | as trained | mirrored (other hand) |
+|---|---|---|
+| before | 0.9712 | **0.0872** (chance is 0.036) |
+| after mirror augmentation | 0.9736 | **0.9544** |
+
+In ASL, a left-handed signer's letter *is* the mirror of a right-handed
+signer's, so a flipped image is still a valid image of the same letter. The
+augmentation flips **image and landmarks on a single shared random draw** —
+independent draws would show opposite hands to the two branches and quietly
+poison the fusion. Verified before training: 400/400 agreement.
+
+Cost: the headline val_accuracy went 0.9373 -> **0.9277**, about a point,
+since the model now covers two orientations with the same capacity. Trading
+one point for 87 is worth it, but it is a trade.
+
+> **Caveat:** 0.9544 comes from mirrored *validation images* — a synthetic
+> left hand. A real left hand differs in lighting, thumb angle and
+> proportion, so treat it as an upper bound.
 
 ---
 
-## Open items
+## 9. The live demo
 
-**Never tested on a real webcam.** Every number here comes from still images.
-Watch three things: the `cv2.flip` mirror versus the handedness of the
-training data; the 80% confidence threshold, tuned blind; and segmentation
-quality against a cluttered background. The preview tile in the corner shows
-whether a bad prediction is segmentation's fault or the model's.
+`src/webcam_demo.py` runs the fusion model at ~34 fps (segmentation 26.5 ms,
+inference 2.8 ms, drawing 0.2 ms).
 
-**Subject leakage remains.** The temporal split removes frame-level leakage
-but not subject or setup leakage — all numbers come from one person, one
-camera, one session. Expect all three models to drop on a new hand, and the
-landmark model to drop least.
+### Distance estimation
 
-**No `nothing` class.** The current model has 28 classes; the archived one
-had 29 including `nothing`. With a hand detected but not forming a letter,
-the model must still pick one of 28. The 80% threshold is the mitigation.
+`solvePnP` over all 21 landmarks, using MediaPipe's metric
+`hand_world_landmarks` for shape but **imposing a fixed hand size**.
 
-**`evaluate.py` is still a stub.** A confusion matrix would show which
-letters fail — M/N/S/T and A/E/S are the classic ASL look-alikes — which is
-more actionable than a single accuracy figure.
+Two failed approaches on the way, both informative:
 
-**Push is blocked.** `4rn0d/signify` grants `pull` but not `push` to
-`ulrichdubjob`. Commit `875f08c` sits on local branch `ulrich_POC`.
+- **Palm width alone** foreshortens when the hand tilts: spread 335% across
+  poses at constant distance (read a "C" as 4.45 m while others read 0.6 m).
+  solvePnP, which solves rotation and distance together, gives 58%.
+- **Trusting MediaPipe's metric scale** — its wrist-to-knuckle estimate
+  varies **7.01 to 10.68 cm** on the same hand (39%). Since
+  `distance = focal x real_size / pixel_size`, an underestimated hand reads
+  as closer. This was the cause of "shows 12 cm when I turn my hand over".
+  Keeping only the *shape* and imposing `HAND_LENGTH_M` removes it.
+
+Accuracy remains ~±25% — an indicator, not a measurement. `CAMERA_FOV_DEG`
+and `HAND_LENGTH_M` set the absolute scale and are uncalibrated by default.
+
+### Placement warnings
+
+- **Too close / too far** (<0.30 m, >1.00 m): median over 9 frames, plus 10%
+  hysteresis. Tested — a signal wobbling across the threshold twelve times
+  produces **one** state change, and a single bad frame is absorbed entirely.
+- **Hand leaving frame**: MediaPipe extrapolates landmarks past the frame
+  edge (x=663 on a 640-wide frame), so out-of-bounds points are a real
+  signal. Gives a direction ("deplace vers la gauche"), needs 3 consecutive
+  frames, and overrides the distance warning since a cut-off hand makes
+  distance meaningless. Past ~100px visible MediaPipe stops detecting
+  entirely, so this covers the *approach* to the edge.
+
+### Text input
+
+Dwell-and-release state machine: a letter must be stable for **0.7 s**, then
+cannot repeat until a **0.3 s** release. Thresholds are in seconds, not
+frames, so typing feel does not change with CPU load.
+
+```
+held A for 3s             -> 'A'      (not 'AAAAAAA')
+A/B alternating for 4s    -> ''       (flicker never commits)
+hold L, release, hold L   -> 'LL'     (deliberate doubles work)
+confident but mis-framed  -> ''       (warnings gate writing)
+H, I, space, A, del       -> 'HI '
+```
+
+Writing requires confidence >= 80% **and** good framing **and** distance in
+range — a badly placed hand writes nothing rather than writing wrong.
+
+---
+
+## 10. Model provenance
+
+Two `.keras` files are indistinguishable on disk. `train.py` and
+`train_fusion.py` write a `.meta.json` sidecar recording split, score, best
+epoch, sample counts and git commit; `webcam_demo.py` prints it at startup:
+
+```
+Modele : FUSION image+landmarks | val_accuracy=0.9277 | 2026-10-01T20:06:48-04:00
+```
+
+See `models/README.md` for the full map. Superseded models live in
+`models/archive/` with sidecars explaining what each one got wrong.
+
+> **Note on `models/comparison.json`:** the `fusion` entry (0.9277) was
+> overwritten by the mirror-augmented rerun, while `cnn` and `landmark` are
+> from the original non-augmented comparison. The clean three-way comparison
+> is the table in section 6 (fusion 0.9373). Do not read those three JSON
+> values as a like-for-like comparison.
+
+---
+
+## 11. Housekeeping
+
+- Three byte-identical copies of `hand_landmarker.task` (7.5 MB each); only
+  `models/` is referenced. Removed two.
+- Added `.gitignore`. Patterns are unanchored (`*.keras`, not
+  `models/*.keras`) — the anchored form does not match subdirectories and
+  would have committed 18 MB from `models/archive/`.
+- `data/` is 1.5 GB (plus 490 MB for the 128px set) and is excluded.
+
+---
+
+## Closing state
+
+**Works:** fusion model at 0.9277, either hand, ~34 fps, with framing and
+distance guidance and dwell-based text entry.
+
+**Known limits, not addressed:**
+
+- **Single subject, single camera, single session.** The temporal split
+  removes frame-level leakage but not signer or setup leakage. Expect all
+  numbers to drop on a new person; expect the landmark model to drop least.
+- **No `nothing` class.** With a hand detected but not forming a letter, the
+  model must still pick one of 28. The 80% threshold is a mitigation, not a
+  fix. Retraining with a `nothing` class is the real answer.
+- **J and Z are motion letters.** The model only gets them because the
+  dataset's frames share a pose — it is not recognising the movement.
+- **No confusion matrix.** `evaluate.py` is still a stub. Knowing *which*
+  letters fail (M/N/S/T and A/E/S are the classic look-alikes) would be more
+  actionable than a single accuracy figure.
+
+**The lesson worth carrying forward:** the single most valuable thing in this
+phase was checking whether the evaluation was honest. The 0.9938 was not a
+bug in the model — it was the model answering an easier question than the one
+that mattered. Every architecture decision made before that check was made on
+bad information.
+
+Word-level recognition (WLASL) starts a separate document.

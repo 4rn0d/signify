@@ -79,6 +79,11 @@ class HandSegmenter:
         # landmark voie la meme forme qu'a l'entrainement.
         self.last_landmarks = None
 
+        # Landmarks METRIQUES (21, 3) en metres, origine au centre de la
+        # main. Combines avec la projection pixel, ils donnent la distance
+        # camera-main par resolution PnP.
+        self.last_world_landmarks = None
+
     # ================================================================
     # MediaPipe model
     # ================================================================
@@ -147,6 +152,7 @@ class HandSegmenter:
 
         if not result.hand_landmarks:
             self.last_landmarks = None
+            self.last_world_landmarks = None
             return frame_bgr.copy(), None, False
 
         # Première main détectée
@@ -154,6 +160,15 @@ class HandSegmenter:
 
         # z suit approximativement l'echelle de x chez MediaPipe : on le
         # multiplie donc par la largeur, comme x.
+        self.last_world_landmarks = (
+            np.array(
+                [[lm.x, lm.y, lm.z] for lm in result.hand_world_landmarks[0]],
+                dtype=np.float32,
+            )
+            if result.hand_world_landmarks
+            else None
+        )
+
         self.last_landmarks = np.array(
             [
                 [lm.x * width, lm.y * height, lm.z * width]
@@ -188,6 +203,7 @@ class HandSegmenter:
 
         if hand_w < 5 or hand_h < 5:
             self.last_landmarks = None
+            self.last_world_landmarks = None
             return frame_bgr.copy(), None, False
 
         # Petite marge autour de la main.
@@ -222,6 +238,7 @@ class HandSegmenter:
 
         if crop.size == 0:
             self.last_landmarks = None
+            self.last_world_landmarks = None
             return frame_bgr.copy(), None, False
 
         # ------------------------------------------------------------
@@ -265,6 +282,7 @@ class HandSegmenter:
 
         if segmented is None:
             self.last_landmarks = None
+            self.last_world_landmarks = None
             return frame_bgr.copy(), None, False
 
         # ------------------------------------------------------------

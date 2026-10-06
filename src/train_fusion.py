@@ -20,7 +20,7 @@ import numpy as np
 import tensorflow as tf
 
 from data_loader import BATCH_SIZE, IMG_SIZE, grouped_split
-from landmark_extractor import NUM_LANDMARKS, normalize_landmarks
+from landmark_extractor import NUM_LANDMARKS, normalize_landmarks  # noqa: F401
 from model_cnn import build_cnn_model
 from model_fusion import build_fusion_model
 from model_landmark import build_landmark_model
@@ -41,6 +41,17 @@ FUSION_META_PATH = os.path.join(PROJECT_ROOT, "models", "sign_model_fusion.meta.
 
 EPOCHS = 40
 PATIENCE = 5
+
+# Le dataset est filme a ~95% avec la meme main (MediaPipe : 61 "Right" sur
+# 64 echantillons). Mesure sur la validation, le modele passe de 0.9712 a
+# 0.0872 — soit le hasard — sur des images miroir : il ne sait reconnaitre
+# qu'une seule main.
+#
+# En alphabet ASL, le signe d'un gaucher est exactement le miroir de celui
+# d'un droitier : retourner une image reste donc une image valide de la meme
+# lettre. On retourne IMAGE ET LANDMARKS ensemble, avec le meme tirage, sinon
+# les deux entrees de la fusion decriraient des mains opposees.
+FLIP_AUGMENT = True
 
 
 def load_landmarks():
@@ -91,6 +102,31 @@ def build_arrays(files, labels, table):
     )
 
 
+def mirror_landmarks(landmarks):
+    """Miroir horizontal : les coordonnees sont deja centrees sur le poignet,
+    il suffit donc d'inverser x."""
+    points = tf.reshape(landmarks, (NUM_LANDMARKS, 3))
+    points = points * tf.constant([-1.0, 1.0, 1.0])
+    return tf.reshape(points, (NUM_LANDMARKS * 3,))
+
+
+def random_flip(image, landmarks):
+    """Retourne les deux, ou aucun : un seul tirage pour les deux entrees."""
+    flip = tf.random.uniform([]) < 0.5
+
+    image = tf.cond(
+        flip,
+        lambda: tf.image.flip_left_right(image) if image is not None else image,
+        lambda: image,
+    )
+    landmarks = tf.cond(
+        flip,
+        lambda: mirror_landmarks(landmarks),
+        lambda: landmarks,
+    )
+    return image, landmarks
+
+
 def _decode(path, landmarks, label):
     img = tf.io.decode_image(
         tf.io.read_file(path), channels=3, expand_animations=False
@@ -126,12 +162,27 @@ def make_dataset(files, landmarks, labels, inputs, shuffle):
     """
     _check_shapes(files, landmarks, labels)
 
+    augment = shuffle and FLIP_AUGMENT      # entrainement seulement
+
     if inputs == "landmarks":
         ds = tf.data.Dataset.from_tensor_slices((landmarks, labels))
 
         if shuffle:
             ds = ds.shuffle(
                 len(labels), seed=123, reshuffle_each_iteration=True
+            )
+
+        if augment:
+            ds = ds.map(
+                lambda l, y: (
+                    tf.cond(
+                        tf.random.uniform([]) < 0.5,
+                        lambda: mirror_landmarks(l),
+                        lambda: l,
+                    ),
+                    y,
+                ),
+                num_parallel_calls=tf.data.AUTOTUNE,
             )
 
         return ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
@@ -142,6 +193,12 @@ def make_dataset(files, landmarks, labels, inputs, shuffle):
         ds = ds.shuffle(len(files), seed=123, reshuffle_each_iteration=True)
 
     ds = ds.map(_decode, num_parallel_calls=tf.data.AUTOTUNE)
+
+    if augment:
+        ds = ds.map(
+            lambda i, l, y: random_flip(i, l) + (y,),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
 
     if inputs == "image":
         ds = ds.map(lambda i, l, y: (i, y), num_parallel_calls=tf.data.AUTOTUNE)

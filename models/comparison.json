@@ -12,9 +12,9 @@
     "params": 60892
   },
   "fusion": {
-    "val_accuracy": 0.9373,
-    "best_epoch": 4,
-    "epochs_run": 9,
+    "val_accuracy": 0.9277,
+    "best_epoch": 5,
+    "epochs_run": 10,
     "params": 1229340
   }
 }

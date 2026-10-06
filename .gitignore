@@ -37,3 +37,7 @@ venv/
 # ---------------------------------------------------------------
 *.bak
 .vscode/
+
+# WLASL : videos et metadata. Le JSON fait 11.9 Mo et se retelecharge avec
+#   curl -sSL -o data/wlasl/WLASL_v0.3.json #     https://raw.githubusercontent.com/dxli94/WLASL/master/start_kit/WLASL_v0.3.json
+data/wlasl/
