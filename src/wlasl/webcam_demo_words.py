@@ -38,12 +38,11 @@ from extract_landmarks import (
     _new_landmarker,
     frame_features,
 )
-from train_kfold import MAX_LEN, pad_sequence
+from train_kfold import MAX_LEN, mirror, pad_sequence
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_gru.keras")
 META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_gru.meta.json")
 
 # Les clips d'entrainement durent 2.8 s en mediane. On enregistre la meme
@@ -76,20 +75,55 @@ COLOR_DIM = (160, 160, 160)
 
 
 def load_model():
-    if not os.path.exists(MODEL_PATH):
-        raise SystemExit(
-            f"Modele absent : {MODEL_PATH}\n"
-            "Lance d'abord : python src/wlasl/train_final.py"
-        )
+    """Charge l ensemble et renvoie une fonction de prediction.
 
-    model = tf.keras.models.load_model(MODEL_PATH)
+    Trois choses doivent correspondre exactement a l entrainement, sinon la
+    demo mesure autre chose que ce que le k-fold a mesure :
+
+    - les memes colonnes conservees (sans la profondeur). On lit la liste
+      ECRITE dans la fiche plutot que de la recalculer : si le calcul
+      changeait, le modele recevrait des colonnes decalees sans qu aucune
+      erreur ne se declenche.
+    - la moyenne sur les 3 modeles de l ensemble.
+    - la moyenne avec l image miroir (TTA), appliquee AVANT le retrait de la
+      profondeur, puisque mirror() attend la disposition complete a 155.
+    """
+    if not os.path.exists(META_PATH):
+        raise SystemExit(
+            f"Fiche absente : {META_PATH}. Lance d abord : "
+            "python src/wlasl/train_final.py"
+        )
 
     with open(META_PATH, encoding="utf-8") as handle:
         meta = json.load(handle)
 
-    @tf.function
-    def predict(batch):
-        return model(batch, training=False)
+    paths = [os.path.join(PROJECT_ROOT, p) for p in meta["models"]]
+    missing = [p for p in paths if not os.path.exists(p)]
+    if missing:
+        raise SystemExit(
+            "Modeles absents : " + ", ".join(missing)
+            + ". Lance : python src/wlasl/train_final.py"
+        )
+
+    models = [tf.keras.models.load_model(p) for p in paths]
+    columns = meta.get("keep_columns")
+
+    def predict(padded):
+        """padded : (T, 155) brut, avant selection de colonnes."""
+        batch = np.stack([padded, mirror(padded[None, ...])[0]])
+
+        if columns is not None:
+            batch = batch[:, :, columns]
+
+        tensor = tf.constant(batch, dtype=tf.float32)
+
+        total = None
+        for model in models:
+            probabilities = model(tensor, training=False).numpy()
+            total = probabilities if total is None else total + probabilities
+
+        # somme sur les modeles ET sur les deux vues (normale + miroir)
+        return total.sum(axis=0) / (len(models) * 2)
 
     return predict, meta
 
@@ -138,7 +172,7 @@ def draw_panel(frame, lines, title=None):
 
 def classify(predict, sequence, classes):
     padded = pad_sequence(np.array(sequence, dtype=np.float32))
-    probabilities = predict(tf.constant(padded[None, ...])).numpy()[0]
+    probabilities = predict(padded)
 
     order = np.argsort(probabilities)[::-1][:TOP_K]
     return [(classes[i], float(probabilities[i])) for i in order]

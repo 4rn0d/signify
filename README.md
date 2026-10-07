@@ -21,3 +21,15 @@ pip install -r requirements.txt
 2. Add MediaPipe landmark extraction, train landmark-based model, compare
 3. Add live webcam_demo.py to test both models in real time
 4. (Advanced) Move to WLASL dataset + temporal modeling (CNN+LSTM or 3D CNN) for full word/sentence signs
+
+## Documentation
+
+- [docs/FINDINGS.md](docs/FINDINGS.md) — alphabet phase (fingerspelling, 28 classes)
+- [docs/WLASL.md](docs/WLASL.md) — word-level phase (WLASL50, 50 signs)
+
+## Running
+
+```
+python src/webcam_demo_alphabet.py    # letters, fusion model
+python src/wlasl/webcam_demo_words.py # words, GRU ensemble
+```
