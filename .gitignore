@@ -19,7 +19,10 @@ data/landmarks/*
 *.h5
 
 # Modele MediaPipe : re-telecharge automatiquement par HandSegmenter
-models/hand_landmarker.task
+# Modeles MediaPipe : telecharges automatiquement, ~10-13 Mo chacun.
+#   hand_landmarker.task     storage.googleapis.com/mediapipe-models/hand_landmarker/...
+#   holistic_landmarker.task storage.googleapis.com/mediapipe-models/holistic_landmarker/...
+*.task
 hand_landmarker.task
 
 # ---------------------------------------------------------------
