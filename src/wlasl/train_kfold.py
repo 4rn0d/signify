@@ -217,7 +217,29 @@ def add_velocity(batch):
     return np.concatenate([batch, velocity], axis=2)
 
 
-def build_model(num_classes, units=96, feature_dim=155, cell="gru"):
+def drop_z_indices(feature_dim=155):
+    """Indices a garder quand on retire la profondeur.
+
+    MediaPipe estime z depuis une seule camera, et c'est peu fiable : son
+    echelle metrique variait de 39% sur une meme main lors des mesures de
+    distance. Un tiers des features est donc du bruit, pour un modele qui
+    n'a qu'une dizaine d'exemples par classe.
+    """
+    keep = []
+    for start in (0, HAND_BLOCK):
+        for point in range(HAND_POINTS):
+            keep += [start + point * 3, start + point * 3 + 1]
+
+    keep += [LEFT_FLAG, RIGHT_FLAG]          # les drapeaux n'ont pas de z
+
+    for point in range((feature_dim - POSE_START) // 3):
+        keep += [POSE_START + point * 3, POSE_START + point * 3 + 1]
+
+    return np.array(keep, dtype=np.int32)
+
+
+def build_model(num_classes, units=96, feature_dim=155, cell="gru",
+                label_smoothing=0.0):
     """cell : 'gru', 'lstm' ou 'stack' (une couche de chaque).
 
     GRU et LSTM resolvent le meme probleme (gradients qui s'evanouissent dans
@@ -247,9 +269,17 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru"):
         layers.Dense(num_classes, activation="softmax"),
     ])
 
+    # sparse_categorical_crossentropy ne gere pas le lissage ; avec lissage
+    # on passe donc par des labels one-hot.
+    loss = (
+        tf.keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+        if label_smoothing > 0
+        else "sparse_categorical_crossentropy"
+    )
+
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-3),
-        loss="sparse_categorical_crossentropy",
+        loss=loss,
         metrics=["accuracy"],
     )
     return model
@@ -282,11 +312,34 @@ def main():
                         help="ajoute les deltas image-a-image (155 -> 310)")
     parser.add_argument("--tag", default="")
     parser.add_argument("--cell", default="gru", choices=("gru", "lstm", "stack"))
+    parser.add_argument("--vocab", type=int, default=50,
+                        help="nombre de classes cibles, les mieux fournies "
+                             "d'abord. Le dossier features peut en contenir "
+                             "davantage (pre-entrainement) : sans ce filtre "
+                             "la tache changerait silencieusement de taille.")
     parser.add_argument("--variants", default="all",
                         choices=("all", "dominant", "split"))
+    parser.add_argument("--no-z", action="store_true",
+                        help="retire la profondeur (155 -> 104 dimensions)")
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--tta", action="store_true",
+                        help="moyenne la prediction avec celle du miroir")
+    parser.add_argument("--seeds", type=int, default=1,
+                        help="modeles par fold, moyennes (ensemble)")
+    parser.add_argument("--pretrain-epochs", type=int, default=60)
+    parser.add_argument("--pretrain-vocab", type=int, default=0,
+                        help="pre-entraine sur les N gloses les mieux fournies "
+                             "avant d'affiner sur le sous-ensemble cible")
     args = parser.parse_args()
 
     records = load_sequences(args.variants)
+
+    # Le dossier features contient 100 gloses depuis le pre-entrainement ;
+    # on restreint aux N cibles pour que la tache reste comparable.
+    counts = collections.Counter(r["gloss"] for r in records)
+    target = {g for g, _ in counts.most_common(args.vocab)}
+    records = [r for r in records if r["gloss"] in target]
+
     glosses = sorted({r["gloss"] for r in records})
     index = {g: i for i, g in enumerate(glosses)}
 
@@ -296,7 +349,17 @@ def main():
 
     print(f"{len(records)} sequences, {len(glosses)} gloses, "
           f"{len(set(signers))} signeurs")
-    feature_dim = features.shape[2] * (2 if args.velocity else 1)
+    # La profondeur est retiree JUSTE avant le modele, pas ici : mirror() et
+    # augment_batch() travaillent sur la disposition complete a 155 colonnes
+    # (indices des mains, des drapeaux et de la pose codes en dur). Couper
+    # d'abord decalerait tous ces indices.
+    keep_columns = drop_z_indices(features.shape[2]) if args.no_z else None
+
+    def to_model(batch):
+        return batch[:, :, keep_columns] if keep_columns is not None else batch
+
+    feature_dim = (len(keep_columns) if keep_columns is not None
+                   else features.shape[2]) * (2 if args.velocity else 1)
     print(f"entree : ({features.shape[1]}, {feature_dim}), "
           f"{args.units} unites {args.cell}, budget {args.epochs} epochs\n")
 
@@ -307,36 +370,96 @@ def main():
     scores = []
     histories = []
 
+    pretrain_x = pretrain_y = None
+    if args.pretrain_vocab:
+        # Pre-entrainement sur un vocabulaire plus large : les gloses hors
+        # cible sont inutiles comme classes (trop peu de clips chacune) mais
+        # leurs sequences apprennent quand meme les regularites du mouvement
+        # des mains et du corps. On affine ensuite sur les classes visees.
+        extra = load_sequences(args.variants)
+        counts = collections.Counter(r["gloss"] for r in extra)
+        wide = {g for g, _ in counts.most_common(args.pretrain_vocab)}
+        extra = [r for r in extra if r["gloss"] in wide]
+
+        wide_index = {g: i for i, g in enumerate(sorted(wide))}
+        pretrain_x = np.stack([pad_sequence(r["features"]) for r in extra])
+        pretrain_y = np.array([wide_index[r["gloss"]] for r in extra], dtype=np.int32)
+        pretrain_signers = np.array([r["signer_id"] for r in extra])
+        print(f"pre-entrainement : {len(extra)} sequences, {len(wide)} gloses\n")
+
     for fold_index, held in enumerate(folds, start=1):
         test_mask = np.isin(signers, list(held))
         train_x, train_y = features[~test_mask], labels[~test_mask]
         test_x, test_y = features[test_mask], labels[test_mask]
 
-        tf.keras.utils.set_random_seed(args.seed + fold_index)
-        model = build_model(len(glosses), args.units, feature_dim, args.cell)
+        eval_x = to_model(add_velocity(test_x) if args.velocity else test_x)
+        mirror_x = mirror(test_x)
+        if args.velocity:
+            mirror_x = add_velocity(mirror_x)
+        mirror_x = to_model(mirror_x)
 
-        eval_x = add_velocity(test_x) if args.velocity else test_x
+        # Un modele par graine ; leurs probabilites sont moyennees. Les
+        # graines divergent beaucoup ici (les folds vont de 0.31 a 0.44),
+        # et c'est precisement cette variance que l'ensemble convertit en
+        # precision.
+        curves = []
+        for seed_index in range(args.seeds):
+            tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
+            model = build_model(len(glosses), args.units, feature_dim,
+                                args.cell, args.label_smoothing)
 
-        best = 0.0
+            if pretrain_x is not None:
+                # Les signeurs du fold de test sont exclus du pre-entrainement
+                # aussi, sinon le modele les aurait vus avant l'affinage.
+                keep = ~np.isin(pretrain_signers, list(held))
+                head = build_model(len(set(pretrain_y)), args.units, feature_dim,
+                                   args.cell, args.label_smoothing)
+                for _ in range(args.pretrain_epochs):
+                    order = rng.permutation(int(keep.sum()))
+                    px = augment_batch(pretrain_x[keep][order], rng)
+                    if args.velocity:
+                        px = add_velocity(px)
+                    px = to_model(px)
+                    py = pretrain_y[keep][order]
+                    if args.label_smoothing > 0:
+                        py = tf.keras.utils.to_categorical(py, len(set(pretrain_y)))
+                    head.fit(px, py, batch_size=args.batch, epochs=1, verbose=0)
+
+                # On reprend tout sauf la couche de sortie, dont le nombre de
+                # classes differe.
+                for target, source in zip(model.layers[:-1], head.layers[:-1]):
+                    if source.get_weights():
+                        target.set_weights(source.get_weights())
+
+            curve = []
+            for epoch in range(args.epochs):
+                order = rng.permutation(len(train_x))
+                batch_x = augment_batch(train_x[order], rng)
+                if args.velocity:
+                    batch_x = add_velocity(batch_x)
+                batch_x = to_model(batch_x)
+
+                fit_y = train_y[order]
+                if args.label_smoothing > 0:
+                    fit_y = tf.keras.utils.to_categorical(fit_y, len(glosses))
+
+                model.fit(batch_x, fit_y, batch_size=args.batch,
+                          epochs=1, verbose=0)
+
+                probabilities = model.predict(eval_x, verbose=0)
+                if args.tta:
+                    # L'entrainement traite deja le miroir comme preservant le
+                    # label : moyenner avec lui est coherent.
+                    probabilities = probabilities + model.predict(mirror_x, verbose=0)
+                curve.append(probabilities)
+
+            curves.append(curve)
+
+        # Precision par epoch, ensemble des graines moyenne.
         curve = []
-
         for epoch in range(args.epochs):
-            order = rng.permutation(len(train_x))
-            batch_x = augment_batch(train_x[order], rng)
-            if args.velocity:
-                # Apres augmentation : le time-warp change les vitesses.
-                batch_x = add_velocity(batch_x)
-            model.fit(
-                batch_x, train_y[order],
-                batch_size=args.batch, epochs=1, verbose=0,
-            )
-
-            # Mesure a chaque epoch pour TRACER la courbe uniquement.
-            # L'arret reste au budget fixe : s'arreter sur ce signal
-            # reviendrait a selectionner sur le test.
-            _, accuracy = model.evaluate(eval_x, test_y, verbose=0)
-            curve.append(round(float(accuracy), 4))
-            best = max(best, accuracy)
+            summed = sum(c[epoch] for c in curves)
+            curve.append(round(float((summed.argmax(axis=1) == test_y).mean()), 4))
 
         final = curve[-1]
         scores.append(final)
@@ -344,7 +467,7 @@ def main():
 
         print(f"  fold {fold_index}/{args.folds}  "
               f"train {len(train_x):>4}  test {len(test_x):>4}  "
-              f"final {final:.4f}   (meilleur vu {best:.4f})", flush=True)
+              f"final {final:.4f}   (meilleur vu {max(curve):.4f})", flush=True)
 
     scores = np.array(scores)
     # Moyenne de fin de plateau : lire une seule epoch fait dependre le
