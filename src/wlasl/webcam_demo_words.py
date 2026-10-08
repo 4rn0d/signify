@@ -38,7 +38,7 @@ from extract_landmarks import (
     _new_landmarker,
     frame_features,
 )
-from train_kfold import MAX_LEN, mirror, pad_sequence
+from train_kfold import MAX_LEN, add_rich_features, mirror, pad_sequence
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -107,31 +107,96 @@ def load_model():
 
     models = [tf.keras.models.load_model(p) for p in paths]
     columns = meta.get("keep_columns")
+    rich = meta.get("rich", False)
+
+    # Chaque modele est enveloppe dans une tf.function. Sans cela chaque
+    # appel repasse par le mode eager de Keras : 1663 ms pour les 6 passes
+    # (3 modeles x 2 vues), soit la seconde et demie de gel apres chaque
+    # enregistrement. Le graphe est trace une fois, au chargement.
+    forwards = []
+    for model in models:
+        @tf.function(reduce_retracing=True)
+        def forward(batch, _model=model):
+            return _model(batch, training=False)
+        forwards.append(forward)
 
     def predict(padded):
         """padded : (T, 155) brut, avant selection de colonnes."""
         batch = np.stack([padded, mirror(padded[None, ...])[0]])
 
+        # Meme ordre qu a l entrainement : les features derivees d abord,
+        # sur la disposition complete, puis la selection de colonnes.
+        extra = add_rich_features(batch)[:, :, -23:] if rich else None
+
         if columns is not None:
             batch = batch[:, :, columns]
+
+        if extra is not None:
+            batch = np.concatenate([batch, extra], axis=-1)
 
         tensor = tf.constant(batch, dtype=tf.float32)
 
         total = None
-        for model in models:
-            probabilities = model(tensor, training=False).numpy()
+        for forward in forwards:
+            probabilities = forward(tensor).numpy()
             total = probabilities if total is None else total + probabilities
 
         # somme sur les modeles ET sur les deux vues (normale + miroir)
         return total.sum(axis=0) / (len(models) * 2)
 
+    # Trace les graphes des maintenant : sinon la premiere classification
+    # payerait la compilation en plein usage.
+    warm = np.zeros((MAX_LEN, 155), dtype=np.float32)
+    predict(warm)
+
     return predict, meta
 
 
-def draw_skeleton(frame, result):
+class SkeletonSmoother:
+    """Garde la derniere main vue pendant quelques frames, POUR L AFFICHAGE.
+
+    Holistic ne detecte une main que dans ~60% des frames, donc le squelette
+    clignote sans arret, ce qui donne une impression de detection ratee alors
+    que le suivi fonctionne.
+
+    Ce lissage ne touche QUE le dessin. Les features envoyees au modele
+    restent telles quelles : une main absente doit rester absente, sinon la
+    demo nourrirait le modele avec des positions inventees, differentes de
+    ce qu il a vu a l entrainement.
+    """
+
+    HOLD_FRAMES = 6
+
+    def __init__(self):
+        self.last = {"left": None, "right": None, "pose": None}
+        self.age = {"left": 0, "right": 0, "pose": 0}
+
+    def update(self, result):
+        current = {
+            "left": result.left_hand_landmarks,
+            "right": result.right_hand_landmarks,
+            "pose": result.pose_landmarks,
+        }
+
+        shown = {}
+        for key, value in current.items():
+            if value:
+                self.last[key] = value
+                self.age[key] = 0
+                shown[key] = value
+            elif self.last[key] is not None and self.age[key] < self.HOLD_FRAMES:
+                self.age[key] += 1
+                shown[key] = self.last[key]
+            else:
+                shown[key] = None
+
+        return shown
+
+
+def draw_skeleton(frame, shown):
     height, width = frame.shape[:2]
 
-    pose = result.pose_landmarks
+    pose = shown["pose"]
     if pose:
         for a, b in POSE_CONNECTIONS:
             if a < len(pose) and b < len(pose):
@@ -139,7 +204,7 @@ def draw_skeleton(frame, result):
                 pb = (int(pose[b].x * width), int(pose[b].y * height))
                 cv2.line(frame, pa, pb, COLOR_POSE, 2, cv2.LINE_AA)
 
-    for hand in (result.left_hand_landmarks, result.right_hand_landmarks):
+    for hand in (shown["left"], shown["right"]):
         if not hand:
             continue
         points = [(int(p.x * width), int(p.y * height)) for p in hand]
@@ -190,6 +255,7 @@ def run():
     print(f"\nSignes connus :\n  {', '.join(classes)}\n")
 
     landmarker = _new_landmarker()
+    smoother = SkeletonSmoother()
     capture = cv2.VideoCapture(0)
 
     if not capture.isOpened():
@@ -221,8 +287,10 @@ def run():
                 timestamp,
             )
 
+            shown = smoother.update(result)
+
             if show_skeleton:
-                draw_skeleton(frame, result)
+                draw_skeleton(frame, shown)
 
             person_visible = bool(result.pose_landmarks)
 

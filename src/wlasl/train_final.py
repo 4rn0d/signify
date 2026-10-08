@@ -34,6 +34,7 @@ import tensorflow as tf
 
 from train_kfold import (
     MAX_LEN,
+    add_rich_features,
     augment_batch,
     build_model,
     drop_z_indices,
@@ -46,7 +47,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 META_PATH = os.path.join(MODELS_DIR, "wlasl_gru.meta.json")
-KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_all5.json")
+KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_everything.json")
 
 
 def model_path(seed_index):
@@ -54,7 +55,7 @@ def model_path(seed_index):
 
 
 def train_one(seed, features, labels, num_classes, args, pretrain=None,
-              keep_columns=None):
+              keep_columns=None, rich=False):
     """features arrive en 155 colonnes.
 
     Le retrait de la profondeur se fait JUSTE avant le modele : mirror(),
@@ -67,10 +68,21 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
     rng = np.random.default_rng(seed)
 
     def to_model(batch):
-        return batch[:, :, keep_columns] if keep_columns is not None else batch
+        # Les features derivees se calculent sur la disposition COMPLETE
+        # (indices des mains et de la pose codes en dur), donc avant la
+        # selection de colonnes.
+        extra = add_rich_features(batch)[:, :, -23:] if rich else None
+
+        if keep_columns is not None:
+            batch = batch[:, :, keep_columns]
+
+        if extra is not None:
+            batch = np.concatenate([batch, extra], axis=-1)
+
+        return batch
 
     feature_dim = (len(keep_columns) if keep_columns is not None
-                   else features.shape[2])
+                   else features.shape[2]) + (23 if rich else 0)
 
     model = build_model(num_classes, args.units, feature_dim,
                         "gru", args.label_smoothing)
@@ -119,6 +131,8 @@ def main():
     parser.add_argument("--vocab", type=int, default=50)
     parser.add_argument("--variants", default="dominant")
     parser.add_argument("--no-z", action="store_true", default=True)
+    parser.add_argument("--rich", action="store_true", default=True,
+                        help="23 scalaires derives de x,y")
     parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--seeds", type=int, default=3)
     parser.add_argument("--pretrain-vocab", type=int, default=100)
@@ -138,7 +152,8 @@ def main():
     labels = np.array([index[r["gloss"]] for r in selected], dtype=np.int32)
 
     keep_columns = drop_z_indices(features.shape[2]) if args.no_z else None
-    feature_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
+    feature_dim = (len(keep_columns) if keep_columns is not None
+                   else features.shape[2]) + (23 if args.rich else 0)
 
     print(f"{len(selected)} sequences, {len(glosses)} gloses, "
           f"{feature_dim} dimensions")
@@ -163,7 +178,7 @@ def main():
     for seed_index in range(args.seeds):
         print(f"  modele {seed_index + 1}/{args.seeds}")
         model = train_one(args.seed + seed_index * 100, features, labels,
-                          len(glosses), args, pretrain, keep_columns)
+                          len(glosses), args, pretrain, keep_columns, args.rich)
         path = model_path(seed_index)
         model.save(path)
         saved.append(os.path.relpath(path, PROJECT_ROOT))
@@ -192,6 +207,7 @@ def main():
         "max_len": MAX_LEN,
         "feature_dim": int(feature_dim),
         "drop_z": bool(args.no_z),
+        "rich": bool(args.rich),
         "keep_columns": keep_columns.tolist() if keep_columns is not None else None,
         "units": args.units,
         "epochs": args.epochs,

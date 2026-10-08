@@ -238,6 +238,142 @@ def drop_z_indices(feature_dim=155):
     return np.array(keep, dtype=np.int32)
 
 
+def add_depth_proxy(batch):
+    """Ajoute 4 indices de profondeur derives des coordonnees x,y FIABLES.
+
+    MediaPipe estime z depuis une seule camera et c est peu fiable : le
+    retirer gagne 7.8 points. Mais la profondeur porte du sens en ASL
+    (gestes vers l avant, bras tendu). On la reconstruit donc a partir de
+    ce que MediaPipe reussit bien.
+
+    Deux indices classiques, en unites de largeur d epaules donc deja
+    invariants a la distance de la personne :
+
+    - largeur de paume (jointures 5 a 17) : une main proche parait plus
+      grande. Mesure : la variation A L INTERIEUR d un clip vaut 79% de la
+      variation entre clips, elle suit donc bien le mouvement.
+    - longueur d avant-bras (coude a poignet) : un bras tendu vers la
+      camera parait raccourci.
+
+    4 scalaires au lieu des 42 valeurs z, tous issus de coordonnees que
+    MediaPipe estime correctement.
+    """
+    def segment(a_off, b_off):
+        a = batch[..., a_off:a_off + 2]
+        b = batch[..., b_off:b_off + 2]
+        return np.linalg.norm(a - b, axis=-1)
+
+    left_palm = segment(5 * 3, 17 * 3)
+    right_palm = segment(HAND_BLOCK + 5 * 3, HAND_BLOCK + 17 * 3)
+
+    # POSE_KEYPOINTS = [nez, epG, epD, coudeG, coudeD, poignetG, poignetD, ...]
+    left_arm = segment(POSE_START + 3 * 3, POSE_START + 5 * 3)
+    right_arm = segment(POSE_START + 4 * 3, POSE_START + 6 * 3)
+
+    extra = np.stack([left_palm, right_palm, left_arm, right_arm], axis=-1)
+    return np.concatenate([batch, extra.astype(np.float32)], axis=-1)
+
+
+# Doigts MediaPipe : (base, [articulations], bout)
+FINGERS = [
+    (1, [1, 2, 3, 4]),      # pouce
+    (5, [5, 6, 7, 8]),      # index
+    (9, [9, 10, 11, 12]),   # majeur
+    (13, [13, 14, 15, 16]), # annulaire
+    (17, [17, 18, 19, 20]), # auriculaire
+]
+
+# Indices dans POSE_KEYPOINTS = [nez, epG, epD, coudeG, coudeD,
+#                                poignetG, poignetD, hancheG, hancheD]
+POSE_NOSE = 0
+
+
+def add_rich_features(batch):
+    """Rend explicites les parametres linguistiques de l ASL.
+
+    Un signe se decrit par quatre parametres : configuration de la main,
+    emplacement, orientation et mouvement. Les coordonnees brutes portent
+    bien le mouvement (le GRU le lit dans la sequence) mais laissent les
+    trois autres implicites. Avec ~11 clips par classe, le modele n a pas
+    de quoi les redecouvrir seul.
+
+    Tout est derive de x,y, que MediaPipe estime correctement — jamais de
+    z, dont le retrait vaut +7.8 points.
+
+      4   profondeur  : largeur de paume, longueur d avant-bras
+     10   configuration : repliement de chaque doigt
+      4   emplacement : distance main-nez et main-buste
+      1   structure   : distance entre les deux mains
+      4   orientation : angle poignet -> majeur, en sin/cos
+     ---
+     23 scalaires
+    """
+    def point(off, index):
+        start = off + index * 3
+        return batch[..., start:start + 2]
+
+    def dist(a, b):
+        return np.linalg.norm(a - b, axis=-1)
+
+    left_present = batch[..., LEFT_FLAG] > 0.5
+    right_present = batch[..., RIGHT_FLAG] > 0.5
+
+    columns = []
+
+    # --- profondeur : segments rigides, raccourcis par la perspective ----
+    for off in (0, HAND_BLOCK):
+        columns.append(dist(point(off, 5), point(off, 17)))      # paume
+    columns.append(dist(point(POSE_START, 3), point(POSE_START, 5)))   # avant-bras G
+    columns.append(dist(point(POSE_START, 4), point(POSE_START, 6)))   # avant-bras D
+
+    # --- configuration : repliement, invariant a la rotation ------------
+    # bout-a-base divise par la longueur deployee du doigt : 1 = tendu,
+    # ~0.3 = replie. Contrairement aux coordonnees brutes, cette mesure ne
+    # change pas quand la main pivote.
+    for off in (0, HAND_BLOCK):
+        for base, chain in FINGERS:
+            straight = dist(point(off, chain[0]), point(off, chain[-1]))
+            along = sum(dist(point(off, chain[i]), point(off, chain[i + 1]))
+                        for i in range(len(chain) - 1))
+            columns.append(straight / np.maximum(along, 1e-6))
+
+    # --- emplacement : ou la main se trouve par rapport au corps ---------
+    # L origine etant le milieu des epaules, |poignet| est deja la distance
+    # au buste.
+    nose = point(POSE_START, POSE_NOSE)
+    for off in (0, HAND_BLOCK):
+        wrist = point(off, 0)
+        columns.append(dist(wrist, nose))
+        columns.append(np.linalg.norm(wrist, axis=-1))
+
+    # --- structure : mains jointes, ecartees, croisees -------------------
+    columns.append(dist(point(0, 0), point(HAND_BLOCK, 0)))
+
+    # --- orientation : direction poignet -> articulation du majeur -------
+    # En sin/cos pour eviter la discontinuite a +-180 degres.
+    for off in (0, HAND_BLOCK):
+        vector = point(off, 9) - point(off, 0)
+        norm = np.maximum(np.linalg.norm(vector, axis=-1), 1e-6)
+        columns.append(vector[..., 0] / norm)
+        columns.append(vector[..., 1] / norm)
+
+    extra = np.stack(columns, axis=-1).astype(np.float32)
+
+    # Une main absente ne doit pas produire de valeurs inventees : ses
+    # colonnes sont remises a zero, les drapeaux de presence disant deja
+    # au modele qu il n y a rien a lire.
+    #       0-1 paumes, 2-3 avant-bras, 4-13 doigts, 14-17 emplacement,
+    #       18 inter-mains, 19-22 orientation
+    left_cols = [0, 4, 5, 6, 7, 8, 14, 15, 19, 20]
+    right_cols = [1, 9, 10, 11, 12, 13, 16, 17, 21, 22]
+
+    extra[..., left_cols] *= left_present[..., None]
+    extra[..., right_cols] *= right_present[..., None]
+    extra[..., 18] *= (left_present & right_present)[..., None][..., 0]
+
+    return np.concatenate([batch, extra], axis=-1)
+
+
 def build_model(num_classes, units=96, feature_dim=155, cell="gru",
                 label_smoothing=0.0):
     """cell : 'gru', 'lstm' ou 'stack' (une couche de chaque).
@@ -319,6 +455,11 @@ def main():
                              "la tache changerait silencieusement de taille.")
     parser.add_argument("--variants", default="all",
                         choices=("all", "dominant", "split"))
+    parser.add_argument("--rich", action="store_true",
+                        help="23 scalaires derives de x,y (profondeur, "
+                             "configuration, emplacement, orientation)")
+    parser.add_argument("--depth-proxy", action="store_true",
+                        help="4 indices de profondeur derives de x,y")
     parser.add_argument("--no-z", action="store_true",
                         help="retire la profondeur (155 -> 104 dimensions)")
     parser.add_argument("--label-smoothing", type=float, default=0.0)
@@ -356,10 +497,30 @@ def main():
     keep_columns = drop_z_indices(features.shape[2]) if args.no_z else None
 
     def to_model(batch):
-        return batch[:, :, keep_columns] if keep_columns is not None else batch
+        # Les indices de profondeur se calculent sur la disposition COMPLETE
+        # (positions des mains et de la pose codees en dur), donc avant la
+        # selection de colonnes.
+        if args.rich:
+            extra = add_rich_features(batch)[:, :, -23:]
+        elif args.depth_proxy:
+            extra = add_depth_proxy(batch)[:, :, -4:]
+        else:
+            extra = None
 
-    feature_dim = (len(keep_columns) if keep_columns is not None
-                   else features.shape[2]) * (2 if args.velocity else 1)
+        if keep_columns is not None:
+            batch = batch[:, :, keep_columns]
+
+        if extra is not None:
+            batch = np.concatenate([batch, extra], axis=-1)
+
+        return batch
+
+    base_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
+    if args.rich:
+        base_dim += 23
+    elif args.depth_proxy:
+        base_dim += 4
+    feature_dim = base_dim * (2 if args.velocity else 1)
     print(f"entree : ({features.shape[1]}, {feature_dim}), "
           f"{args.units} unites {args.cell}, budget {args.epochs} epochs\n")
 
@@ -494,6 +655,14 @@ def main():
                 "cell": args.cell,
                 "variants": args.variants,
                 "velocity": bool(args.velocity),
+                "no_z": bool(args.no_z),
+                "depth_proxy": bool(args.depth_proxy),
+                "rich": bool(args.rich),
+                "label_smoothing": args.label_smoothing,
+                "tta": bool(args.tta),
+                "seeds": args.seeds,
+                "pretrain_vocab": args.pretrain_vocab,
+                "vocab": args.vocab,
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),

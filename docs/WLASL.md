@@ -6,7 +6,7 @@ pipeline: a sign is defined by movement, often uses two hands, and carries
 meaning in *where* it happens relative to the body — none of which a
 single-frame image classifier represents.
 
-**Current state:** 0.6254 ± 0.0450 on 50 signs, chance 0.0200 — **31× chance**,
+**Current state:** 0.6762 ± 0.0619 on 50 signs, chance 0.0200 — **34× chance**,
 on a signer-disjoint split.
 
 ---
@@ -141,11 +141,15 @@ configuration                        plateau      std     step
 all clips, old vocabulary             0.3702   0.0435
 dominant variant only                 0.4258   0.0598  +0.0557
   (vocabulary selection changed)      0.4564   0.0371  +0.0305
-+ drop-z, label smoothing, TTA        0.5720   0.0586  +0.1157
-+ ensemble x3, pretrain on 100        0.6254   0.0450  +0.0534
++ drop z                              0.5347   0.0415  +0.0783
++ 23 derived features                 0.5937   0.0591  +0.0590
++ ensemble x3, pretrain, smoothing,
+  TTA                                 0.6762   0.0619  +0.0824
 ```
 
-Every step won **5/5 folds**.
+Every step won **5/5 folds**. Per fold at the end:
+0.731, 0.575, 0.656, 0.669, 0.750 — fold 2, consistently the hardest draw
+of held-out signers, went from 0.310 to 0.575 over the project.
 
 ### What did not
 
@@ -154,12 +158,13 @@ LSTM instead of GRU        0.2776   -0.093   0/5 folds
 GRU -> LSTM stack          0.2768   -0.093   0/5
 velocity features (deltas) 0.3563   -0.014   2/5
 capacity 96 -> 160 units   0.3579   -0.012   2/5
+depth proxy alone          0.5300   -0.005   1/5
 variants as separate cls   0.3636   (71 classes, not comparable)
 more epochs (80 -> 250)    +0.003   plateau reached at ~150
 ```
 
-**Nine experiments. Every model-side change was neutral or harmful; every
-data-side change helped.** LSTM's extra gate costs 30% more parameters, and
+**Twelve experiments. Every model-side change was neutral or harmful; the
+gains came entirely from what the model is shown, never from the model.** LSTM's extra gate costs 30% more parameters, and
 with ~11 clips per class the smallest adequate model wins.
 
 ### The two findings worth keeping
@@ -173,8 +178,31 @@ labels cost more than the data was worth.
 **Dropping the z coordinate.** MediaPipe estimates depth from a single
 camera, and we had already measured its unreliability during the alphabet
 phase (39% scale variation on one hand). Removing it cuts the input from 155
-to 104 dimensions and is the largest single contributor to the +11.6 step.
-**Accuracy improved by deleting a third of the input.**
+to 104 dimensions and is worth **+7.8 points on its own** (measured by
+ablation). **Accuracy improved by deleting a third of the input.**
+
+**23 features derived from the x,y that MediaPipe gets right.** ASL is
+described by four parameters — handshape, location, orientation, movement.
+Raw landmark sequences carry movement well but leave the other three
+implicit, and with ~11 clips per class the model cannot rediscover them.
+
+```
+ 4  depth        palm width, forearm length (rigid segments foreshorten)
+10  handshape    per-finger curl: tip-to-base over summed bone length
+ 4  location     hand-to-nose, hand-to-chest
+ 1  structure    distance between the two hands
+ 4  orientation  wrist->knuckle direction, as sin/cos
+```
+
+Worth **+5.9 points**, 5/5 folds, at 127 dimensions — still fewer than the
+155 we started with.
+
+The distinction that matters: **velocity features and the depth proxy alone
+both returned nothing, because the GRU could already derive them from the
+coordinates.** Finger curl is different — it is *rotation-invariant*, which
+raw coordinates cannot express, so it is genuinely new information rather
+than a shortcut. Tested alone the depth proxy was -0.5; inside the group it
+contributes.
 
 ---
 
