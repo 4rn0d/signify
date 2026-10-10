@@ -36,6 +36,46 @@ RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_kfold.json")
 MAX_LEN = 80
 
 HAND_POINTS = 21
+
+
+class Layout:
+    """Disposition du vecteur de features, selon l extracteur utilise.
+
+    MediaPipe donne 3 coordonnees par point (x, y, z) soit 155 colonnes ;
+    RTMPose n en donne que 2 (x, y) soit 104. Toutes les fonctions qui
+    indexent les mains, les drapeaux ou la pose doivent donc connaitre le
+    nombre de coordonnees, sinon elles lisent les mauvaises colonnes — sans
+    lever d erreur, en degradant simplement le resultat.
+    """
+
+    def __init__(self, coords, tail=0):
+        self.coords = coords
+        self.tail = tail                  # colonnes ajoutees en fin de vecteur
+        self.hand_block = HAND_POINTS * coords
+        self.left_flag = self.hand_block * 2
+        self.right_flag = self.left_flag + 1
+        self.pose_start = self.left_flag + 2
+
+    @classmethod
+    def from_dim(cls, dim):
+        """Deduit la disposition du nombre de colonnes.
+
+        NE PEUT PAS deviner un tail : 106 colonnes se lisent aussi bien comme
+        "9 points de pose + 2 colonnes de confiance" que comme "10 points de
+        pose", et le second ferait negater x sur les confiances au miroir.
+        Quand un tail existe, la disposition doit etre passee explicitement.
+        """
+        for coords in (3, 2):
+            pose_points = (dim - HAND_POINTS * coords * 2 - 2) / coords
+            if pose_points == int(pose_points) and pose_points > 0:
+                return cls(coords)
+        raise ValueError(f"disposition inconnue pour {dim} colonnes")
+
+    def pose_points(self, dim):
+        return (dim - self.tail - self.pose_start) // self.coords
+
+
+# Disposition MediaPipe, conservee pour les constantes historiques.
 HAND_BLOCK = HAND_POINTS * 3          # 63
 LEFT_HAND = slice(0, HAND_BLOCK)
 RIGHT_HAND = slice(HAND_BLOCK, HAND_BLOCK * 2)
@@ -48,7 +88,8 @@ POSE_START = HAND_BLOCK * 2 + 2
 POSE_MIRROR_PAIRS = [(1, 2), (3, 4), (5, 6), (7, 8)]
 
 
-def load_sequences(variants="all"):
+def load_sequences(variants="all", features_dir=None, metadata_only=False,
+                   with_confidence=False):
     """variants : 'all', 'dominant' (variante majoritaire seulement) ou
     'split' (chaque variante devient une classe a part).
 
@@ -66,14 +107,31 @@ def load_sequences(variants="all"):
         }
 
     records = []
-    for path in sorted(glob.glob(os.path.join(FEATURES_DIR, "*.npz"))):
+    for path in sorted(glob.glob(os.path.join(features_dir or FEATURES_DIR, "*.npz"))):
         data = np.load(path, allow_pickle=True)
         video_id = str(data["video_id"])
+        if metadata_only:
+            vector = None
+        else:
+            vector = data["features"].astype(np.float32)
+            if with_confidence:
+                if "hand_scores" not in data.files:
+                    raise ValueError(
+                        f"{os.path.basename(path)} ne contient pas hand_scores. "
+                        f"--confidence demande une extraction faite apres l ajout "
+                        f"de ce champ (data/wlasl/features_rtm07 et apres)."
+                    )
+                # En QUEUE du vecteur : inserees au milieu, elles decaleraient
+                # pose_start et tous les indices codes en dur.
+                vector = np.concatenate(
+                    [vector, data["hand_scores"].astype(np.float32)], axis=1)
+
         records.append(
             {
-                "features": data["features"].astype(np.float32),
+                "features": vector,
                 "gloss": str(data["gloss"]),
                 "signer_id": int(data["signer_id"]),
+                "video_id": video_id,
                 "variation_id": int(variation.get(video_id, 0)),
             }
         )
@@ -112,7 +170,7 @@ def pad_sequence(sequence, max_len=MAX_LEN):
     return np.concatenate([sequence, padding], axis=0)
 
 
-def mirror(batch):
+def mirror(batch, layout=None):
     """Miroir horizontal d'un lot de sequences.
 
     Negater x ne suffit pas : refleter une personne echange aussi sa main
@@ -121,28 +179,48 @@ def mirror(batch):
     gauche — exactement le genre d'incoherence qui avait empoisonne la
     fusion sur l'alphabet.
     """
+    layout = layout or Layout.from_dim(batch.shape[-1])
+    step = layout.coords
+
     out = batch.copy()
 
-    # x est l'indice 0 de chaque triplet (x, y, z).
-    for block in (LEFT_HAND, RIGHT_HAND):
-        out[..., block.start:block.stop:3] *= -1.0
-    out[..., POSE_START::3] *= -1.0
+    left_hand = slice(0, layout.hand_block)
+    right_hand = slice(layout.hand_block, layout.hand_block * 2)
+
+    # x est la premiere coordonnee de chaque point.
+    for block in (left_hand, right_hand):
+        out[..., block.start:block.stop:step] *= -1.0
+
+    # La negation de x s arrete AVANT la queue : un pas de `step` depuis
+    # pose_start jusqu a la fin du vecteur tomberait sur les colonnes de
+    # confiance et leur changerait le signe, sans erreur ni message.
+    pose_end = batch.shape[-1] - layout.tail
+    out[..., layout.pose_start:pose_end:step] *= -1.0
 
     # Echange des deux mains, puis des drapeaux de presence.
-    left = out[..., LEFT_HAND].copy()
-    out[..., LEFT_HAND] = out[..., RIGHT_HAND]
-    out[..., RIGHT_HAND] = left
+    left = out[..., left_hand].copy()
+    out[..., left_hand] = out[..., right_hand]
+    out[..., right_hand] = left
 
-    flags = out[..., LEFT_FLAG].copy()
-    out[..., LEFT_FLAG] = out[..., RIGHT_FLAG]
-    out[..., RIGHT_FLAG] = flags
+    flags = out[..., layout.left_flag].copy()
+    out[..., layout.left_flag] = out[..., layout.right_flag]
+    out[..., layout.right_flag] = flags
 
     # Echange des points de pose lateraux.
     for a, b in POSE_MIRROR_PAIRS:
-        ia, ib = POSE_START + a * 3, POSE_START + b * 3
-        tmp = out[..., ia:ia + 3].copy()
-        out[..., ia:ia + 3] = out[..., ib:ib + 3]
-        out[..., ib:ib + 3] = tmp
+        ia = layout.pose_start + a * step
+        ib = layout.pose_start + b * step
+        tmp = out[..., ia:ia + step].copy()
+        out[..., ia:ia + step] = out[..., ib:ib + step]
+        out[..., ib:ib + step] = tmp
+
+    # Les colonnes de queue sont les confiances (gauche, droite) : elles
+    # suivent leur main. Les oublier donnerait au modele la confiance de la
+    # main droite en face des points de la gauche.
+    if layout.tail == 2:
+        swap = out[..., -2].copy()
+        out[..., -2] = out[..., -1]
+        out[..., -1] = swap
 
     return out
 
@@ -163,7 +241,7 @@ def time_warp(sequence, rng, low=0.8, high=1.25):
     return pad_sequence(warped)
 
 
-def augment_batch(batch, rng):
+def augment_batch(batch, rng, layout=None):
     out = np.empty_like(batch)
 
     for i, sequence in enumerate(batch):
@@ -187,7 +265,7 @@ def augment_batch(batch, rng):
 
     flip = rng.random(len(out)) < 0.5
     if flip.any():
-        out[flip] = mirror(out[flip])
+        out[flip] = mirror(out[flip], layout)
 
     return out
 
@@ -225,6 +303,15 @@ def drop_z_indices(feature_dim=155):
     distance. Un tiers des features est donc du bruit, pour un modele qui
     n'a qu'une dizaine d'exemples par classe.
     """
+    # RTMPose ne fournit pas de profondeur : il n y a rien a retirer, et les
+    # indices calcules ici (3 coordonnees par point) designeraient les
+    # mauvaises colonnes sans lever d erreur.
+    if feature_dim != 155:
+        raise ValueError(
+            f"--no-z ne s applique qu aux features MediaPipe (155 colonnes), "
+            f"recu {feature_dim}. Les features RTMPose sont deja en 2D."
+        )
+
     keep = []
     for start in (0, HAND_BLOCK):
         for point in range(HAND_POINTS):
@@ -258,6 +345,16 @@ def add_depth_proxy(batch):
     4 scalaires au lieu des 42 valeurs z, tous issus de coordonnees que
     MediaPipe estime correctement.
     """
+    # Cette fonction code en dur la disposition MediaPipe (3 coordonnees).
+    # Sur des features RTMPose (2 coordonnees) elle lirait les mauvaises
+    # colonnes sans erreur : on refuse explicitement.
+    if batch.shape[-1] != 155:
+        raise ValueError(
+            f"add_depth_proxy attend la disposition MediaPipe a 155 colonnes, "
+            f"recu {batch.shape[-1]}. Utilise add_rich_features, qui gere les "
+            f"deux dispositions."
+        )
+
     def segment(a_off, b_off):
         a = batch[..., a_off:a_off + 2]
         b = batch[..., b_off:b_off + 2]
@@ -288,7 +385,64 @@ FINGERS = [
 POSE_NOSE = 0
 
 
-def add_rich_features(batch):
+def add_symmetry(batch, layout=None):
+    """Deux scalaires sur le rapport entre les deux mains.
+
+    Beaucoup de signes bimanuels sont symetriques : les deux mains y prennent
+    la meme configuration, en miroir l une de l autre. Le GRU peut en principe
+    le deduire des coordonnees, et notre regle dit que ce genre de
+    re-derivation ne rapporte rien (les vitesses et le proxy de profondeur
+    seuls n ont rien donne, alors que le repliement, invariant a la rotation,
+    a rapporte). C est donc un test de cette regle autant qu une feature.
+
+      1  symetrie de position : ecart entre la main gauche et la DROITE
+         reflechie par rapport a l axe du corps. L origine etant le milieu
+         des epaules, l axe est x = 0.
+      1  symetrie de configuration : ecart moyen des repliements doigt a doigt
+    """
+    layout = layout or Layout.from_dim(batch.shape[-1])
+    step = layout.coords
+    hand_block = layout.hand_block
+
+    def point(off, index):
+        start = off + index * step
+        return batch[..., start:start + 2]
+
+    def dist(a, b):
+        return np.linalg.norm(a - b, axis=-1)
+
+    left_present = batch[..., layout.left_flag] > 0.5
+    right_present = batch[..., layout.right_flag] > 0.5
+    both = (left_present & right_present).astype(np.float32)
+
+    # Position : la main droite reflechie doit se superposer a la gauche.
+    gaps = []
+    for index in range(HAND_POINTS):
+        left = point(0, index)
+        right = point(hand_block, index)
+        reflected = np.stack([-right[..., 0], right[..., 1]], axis=-1)
+        gaps.append(dist(left, reflected))
+    position = np.mean(np.stack(gaps, axis=-1), axis=-1)
+
+    # Configuration : meme repliement des deux cotes ?
+    differences = []
+    for base, chain in FINGERS:
+        curls = []
+        for off in (0, hand_block):
+            straight = dist(point(off, chain[0]), point(off, chain[-1]))
+            along = sum(dist(point(off, chain[i]), point(off, chain[i + 1]))
+                        for i in range(len(chain) - 1))
+            curls.append(straight / np.maximum(along, 1e-6))
+        differences.append(np.abs(curls[0] - curls[1]))
+    handshape = np.mean(np.stack(differences, axis=-1), axis=-1)
+
+    # Les deux grandeurs n ont de sens qu avec DEUX mains.
+    extra = np.stack([position * both, handshape * both], axis=-1).astype(np.float32)
+
+    return np.concatenate([batch, extra], axis=-1)
+
+
+def add_rich_features(batch, layout=None):
     """Rend explicites les parametres linguistiques de l ASL.
 
     Un signe se decrit par quatre parametres : configuration de la main,
@@ -308,29 +462,34 @@ def add_rich_features(batch):
      ---
      23 scalaires
     """
+    layout = layout or Layout.from_dim(batch.shape[-1])
+    step = layout.coords
+    hand_block = layout.hand_block
+    pose_start = layout.pose_start
+
     def point(off, index):
-        start = off + index * 3
-        return batch[..., start:start + 2]
+        start = off + index * step
+        return batch[..., start:start + 2]       # toujours x,y
 
     def dist(a, b):
         return np.linalg.norm(a - b, axis=-1)
 
-    left_present = batch[..., LEFT_FLAG] > 0.5
-    right_present = batch[..., RIGHT_FLAG] > 0.5
+    left_present = batch[..., layout.left_flag] > 0.5
+    right_present = batch[..., layout.right_flag] > 0.5
 
     columns = []
 
     # --- profondeur : segments rigides, raccourcis par la perspective ----
-    for off in (0, HAND_BLOCK):
+    for off in (0, hand_block):
         columns.append(dist(point(off, 5), point(off, 17)))      # paume
-    columns.append(dist(point(POSE_START, 3), point(POSE_START, 5)))   # avant-bras G
-    columns.append(dist(point(POSE_START, 4), point(POSE_START, 6)))   # avant-bras D
+    columns.append(dist(point(pose_start, 3), point(pose_start, 5)))   # avant-bras G
+    columns.append(dist(point(pose_start, 4), point(pose_start, 6)))   # avant-bras D
 
     # --- configuration : repliement, invariant a la rotation ------------
     # bout-a-base divise par la longueur deployee du doigt : 1 = tendu,
     # ~0.3 = replie. Contrairement aux coordonnees brutes, cette mesure ne
     # change pas quand la main pivote.
-    for off in (0, HAND_BLOCK):
+    for off in (0, hand_block):
         for base, chain in FINGERS:
             straight = dist(point(off, chain[0]), point(off, chain[-1]))
             along = sum(dist(point(off, chain[i]), point(off, chain[i + 1]))
@@ -340,18 +499,18 @@ def add_rich_features(batch):
     # --- emplacement : ou la main se trouve par rapport au corps ---------
     # L origine etant le milieu des epaules, |poignet| est deja la distance
     # au buste.
-    nose = point(POSE_START, POSE_NOSE)
-    for off in (0, HAND_BLOCK):
+    nose = point(pose_start, POSE_NOSE)
+    for off in (0, hand_block):
         wrist = point(off, 0)
         columns.append(dist(wrist, nose))
         columns.append(np.linalg.norm(wrist, axis=-1))
 
     # --- structure : mains jointes, ecartees, croisees -------------------
-    columns.append(dist(point(0, 0), point(HAND_BLOCK, 0)))
+    columns.append(dist(point(0, 0), point(hand_block, 0)))
 
     # --- orientation : direction poignet -> articulation du majeur -------
     # En sin/cos pour eviter la discontinuite a +-180 degres.
-    for off in (0, HAND_BLOCK):
+    for off in (0, hand_block):
         vector = point(off, 9) - point(off, 0)
         norm = np.maximum(np.linalg.norm(vector, axis=-1), 1e-6)
         columns.append(vector[..., 0] / norm)
@@ -448,6 +607,8 @@ def main():
                         help="ajoute les deltas image-a-image (155 -> 310)")
     parser.add_argument("--tag", default="")
     parser.add_argument("--cell", default="gru", choices=("gru", "lstm", "stack"))
+    parser.add_argument("--features-dir", default=None,
+                        help="dossier de sequences (defaut : data/wlasl/features)")
     parser.add_argument("--vocab", type=int, default=50,
                         help="nombre de classes cibles, les mieux fournies "
                              "d'abord. Le dossier features peut en contenir "
@@ -471,15 +632,55 @@ def main():
     parser.add_argument("--pretrain-vocab", type=int, default=0,
                         help="pre-entraine sur les N gloses les mieux fournies "
                              "avant d'affiner sur le sous-ensemble cible")
+    parser.add_argument("--confidence", action="store_true",
+                        help="donner la confiance de chaque main comme valeur "
+                             "continue, en plus du drapeau binaire. Le modele "
+                             "ne peut aujourd hui pas distinguer une main a "
+                             "0.71 d une a 0.99.")
+    parser.add_argument("--symmetry", action="store_true",
+                        help="deux scalaires de symetrie entre les mains")
+    parser.add_argument("--vocab-from", default=None,
+                        help="choisir les gloses d apres CE dossier de features. "
+                             "Comparer deux detecteurs sans cela refait le "
+                             "confondu cheap3 : chacun selectionne son propre "
+                             "vocabulaire, et un tiers de l ecart vient de la.")
+    parser.add_argument("--clips-from", default=None,
+                        help="ne garder que les clips presents dans CE dossier. "
+                             "Un meilleur detecteur sauve des clips que l autre "
+                             "a rejetes ; sans cela on mesure aussi ce surplus "
+                             "de donnees, pas seulement la qualite des features.")
     args = parser.parse_args()
 
-    records = load_sequences(args.variants)
+    if args.confidence and args.no_z:
+        parser.error("--confidence vient des features RTMPose, --no-z des "
+                     "features MediaPipe : les deux ensemble n ont pas de sens")
+
+    records = load_sequences(args.variants, args.features_dir,
+                             with_confidence=args.confidence)
+
+    if args.clips_from:
+        reference = load_sequences(args.variants, args.clips_from, metadata_only=True)
+        allowed = {r["video_id"] for r in reference}
+        before = len(records)
+        records = [r for r in records if r["video_id"] in allowed]
+        print(f"clips restreints a {args.clips_from} : {before} -> {len(records)}")
 
     # Le dossier features contient 100 gloses depuis le pre-entrainement ;
     # on restreint aux N cibles pour que la tache reste comparable.
-    counts = collections.Counter(r["gloss"] for r in records)
+    if args.vocab_from:
+        reference = load_sequences(args.variants, args.vocab_from, metadata_only=True)
+        counts = collections.Counter(r["gloss"] for r in reference)
+    else:
+        counts = collections.Counter(r["gloss"] for r in records)
+
     target = {g for g, _ in counts.most_common(args.vocab)}
     records = [r for r in records if r["gloss"] in target]
+
+    if args.vocab_from:
+        own = collections.Counter(r["gloss"] for r in records)
+        missing = sorted(target - set(own))
+        print(f"vocabulaire repris de {args.vocab_from}"
+              + (f" ; {len(missing)} gloses absentes ici : {missing}" if missing else ""))
 
     glosses = sorted({r["gloss"] for r in records})
     index = {g: i for i, g in enumerate(glosses)}
@@ -496,26 +697,35 @@ def main():
     # d'abord decalerait tous ces indices.
     keep_columns = drop_z_indices(features.shape[2]) if args.no_z else None
 
+    # Disposition construite a la main des qu il y a une queue : from_dim ne
+    # peut pas la deviner sans ambiguite (voir son docstring).
+    tail = 2 if args.confidence else 0
+    layout = Layout.from_dim(features.shape[2] - tail)
+    layout.tail = tail
+
     def to_model(batch):
         # Les indices de profondeur se calculent sur la disposition COMPLETE
         # (positions des mains et de la pose codees en dur), donc avant la
         # selection de colonnes.
+        pieces = []
         if args.rich:
-            extra = add_rich_features(batch)[:, :, -23:]
+            pieces.append(add_rich_features(batch, layout)[:, :, -23:])
         elif args.depth_proxy:
-            extra = add_depth_proxy(batch)[:, :, -4:]
-        else:
-            extra = None
+            pieces.append(add_depth_proxy(batch)[:, :, -4:])
+        if args.symmetry:
+            pieces.append(add_symmetry(batch, layout)[:, :, -2:])
 
         if keep_columns is not None:
             batch = batch[:, :, keep_columns]
 
-        if extra is not None:
-            batch = np.concatenate([batch, extra], axis=-1)
+        if pieces:
+            batch = np.concatenate([batch] + pieces, axis=-1)
 
         return batch
 
     base_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
+    if args.symmetry:
+        base_dim += 2
     if args.rich:
         base_dim += 23
     elif args.depth_proxy:
@@ -537,7 +747,11 @@ def main():
         # cible sont inutiles comme classes (trop peu de clips chacune) mais
         # leurs sequences apprennent quand meme les regularites du mouvement
         # des mains et du corps. On affine ensuite sur les classes visees.
-        extra = load_sequences(args.variants)
+        # Le MEME extracteur et les MEMES colonnes que l affinage : sans
+        # --features-dir cet appel relisait le dossier par defaut (MediaPipe,
+        # 155 colonnes) pour pre-entrainer un modele affine ensuite sur 129.
+        extra = load_sequences(args.variants, args.features_dir,
+                               with_confidence=args.confidence)
         counts = collections.Counter(r["gloss"] for r in extra)
         wide = {g for g, _ in counts.most_common(args.pretrain_vocab)}
         extra = [r for r in extra if r["gloss"] in wide]
@@ -554,7 +768,7 @@ def main():
         test_x, test_y = features[test_mask], labels[test_mask]
 
         eval_x = to_model(add_velocity(test_x) if args.velocity else test_x)
-        mirror_x = mirror(test_x)
+        mirror_x = mirror(test_x, layout)
         if args.velocity:
             mirror_x = add_velocity(mirror_x)
         mirror_x = to_model(mirror_x)
@@ -577,7 +791,7 @@ def main():
                                    args.cell, args.label_smoothing)
                 for _ in range(args.pretrain_epochs):
                     order = rng.permutation(int(keep.sum()))
-                    px = augment_batch(pretrain_x[keep][order], rng)
+                    px = augment_batch(pretrain_x[keep][order], rng, layout)
                     if args.velocity:
                         px = add_velocity(px)
                     px = to_model(px)
@@ -595,7 +809,7 @@ def main():
             curve = []
             for epoch in range(args.epochs):
                 order = rng.permutation(len(train_x))
-                batch_x = augment_batch(train_x[order], rng)
+                batch_x = augment_batch(train_x[order], rng, layout)
                 if args.velocity:
                     batch_x = add_velocity(batch_x)
                 batch_x = to_model(batch_x)
@@ -663,6 +877,8 @@ def main():
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
                 "vocab": args.vocab,
+                "confidence": args.confidence,
+                "symmetry": args.symmetry,
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),
