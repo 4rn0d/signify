@@ -22,12 +22,12 @@ class TrainingPage extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        Icons.waving_hand_rounded,
-                        color: colors.primary,
-                        size: 28,
+                      IconButton(
+                        tooltip: 'Back to menu',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_rounded),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 4),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
