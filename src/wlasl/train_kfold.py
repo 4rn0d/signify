@@ -882,8 +882,15 @@ def main():
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),
+                # Le plateau PAR FOLD, et pas seulement sa moyenne : sans lui,
+                # un test apparie entre deux runs doit se rabattre sur
+                # per_fold, qui est la DERNIERE epoque. Les deux metriques
+                # peuvent differer de plus d un point et meme s inverser.
+                "per_fold_plateau": [float(x) for x in tail],
                 "mean": float(scores.mean()),
                 "std": float(scores.std()),
+                # Derniere epoque, conservee pour l historique : ce n est
+                # PAS la metrique de reference, qui est per_fold_plateau.
                 "per_fold": [float(s) for s in scores],
                 "curves": histories,
             },

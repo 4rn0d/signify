@@ -18,8 +18,16 @@ MediaPipe + derived features          0.5867
 RTMPose @0.7 + derived + confidence   0.6005
 ```
 
-Parity on accuracy (+1.4, t=+0.80, not significant) with far better hand
-coverage. The same stack has not yet been re-measured on RTMPose features.
+With the full training stack on both sides:
+
+```
+MediaPipe + stack                     0.6762
+RTMPose @0.7 + confidence + stack     0.6675
+```
+
+**A tie.** The gap of 0.9 points is smaller than the disagreement between two
+reasonable ways of aggregating the same runs (see §7.6), and is not
+significant. RTMPose is kept for its hand coverage, not for accuracy.
 
 ---
 
@@ -362,10 +370,10 @@ RTMPose@0.7 vs MediaPipe -0.0151   t=-1.05   2/5 folds   not significant
                                    95% interval -0.055 to +0.025
 ```
 
-Adding confidence as a feature (§7.3b) takes it to **0.6005**, which is ahead
-of MediaPipe's 0.5867 by +1.4 — but at t=+0.80 on 3/5 folds that is not a
-significant win, so the honest claim is parity on accuracy with much better
-hand coverage.
+Adding confidence as a feature (§7.3b) takes it to **0.5892**, against
+MediaPipe's 0.5937 — still a tie, with MediaPipe marginally ahead on the
+metric of record. The honest claim is parity on accuracy with much better hand
+coverage, never a win.
 
 **The threshold recovered 11.9 of the 14.9 points, and the detector choice is a
 wash.** The two are statistically indistinguishable on accuracy. The case for
@@ -411,7 +419,7 @@ only directly observable absence signal is that it places keypoints **outside
 the image**; a hand with over half its points out of frame is treated as absent.
 That changes the decision on ~3.2% of frames.
 
-### 7.3b Confidence as a feature, worth +2.9
+### 7.3b Confidence as a feature, worth +1.6
 
 With the threshold at 0.7 the model is told *whether* a hand is present but
 not how much to trust it — a hand at 0.71 and one at 0.99 look identical. The
@@ -419,11 +427,14 @@ per-hand confidence is stored in each `.npz`, so feeding it as two continuous
 columns costs nothing but a flag. Tested against the same five folds:
 
 ```
-confidence alone                +0.0289   t +3.01   5/5 folds   significant
-symmetry, added to confidence    -0.0139   t -0.75   1/5 folds   noise
+                              plateau    last epoch, paired
+confidence alone              +0.0156    +0.0289  t +3.01  5/5 folds
+symmetry, added to confidence -0.0155    -0.0139  t -0.75  1/5 folds
 ```
 
-**Confidence is worth +2.9 points, winning every fold**, with the largest gain
+**Confidence is worth +1.6 points on the metric of record** (it was first
+reported as +2.9, which came from the last-epoch figures — see §7.6). It won
+every fold on the last-epoch measure, with the largest gain
 on fold 2 — the hardest draw of held-out signers — which is what one expects if
 the benefit is the model learning to discount unreliable hands. It must swap
 with its hand under mirroring, like the presence flags.
@@ -515,7 +526,39 @@ so it accepts a `global` declaration placed after a read of the same name.
 `py_compile.compile(..., doraise=True)` catches it. Several files "verified" with
 `ast.parse` during this phase had only their grammar checked.
 
-### 7.6 Dataset framing does not match a webcam
+### 7.6 Two metrics, and a reporting error
+
+Every paired t-test in this phase was run on `per_fold`, which holds the
+**last epoch** of each fold — while the reported figure is `plateau_mean`, the
+mean over the last 30 epochs. §5 adopted the tail mean precisely because
+single-epoch readings swing about two points on where training happens to
+stop. So the significance tests used the noisy metric and were quoted against
+the clean one.
+
+The two disagree, and can invert:
+
+```
+                             plateau   last epoch
+threshold 0.3 -> 0.7         +0.1293     +0.1185
+confidence                   +0.0156     +0.0289
+RTMPose+conf vs MediaPipe    -0.0045     +0.0138
+full stack vs MediaPipe      -0.0087     +0.0082
+```
+
+The threshold result is unaffected — it is far too large to care. But
+confidence was first reported as +2.9 when it is +1.6, and RTMPose was
+described as having moved *ahead* of MediaPipe when on the metric of record it
+stays marginally behind in every comparable configuration.
+
+`per_fold_plateau` is now written to each result file so paired tests can use
+the right metric. It cannot be recovered for the runs above, so their paired
+statistics remain last-epoch and should be read as directional only.
+
+**A difference smaller than the gap between two defensible aggregations of the
+same data is not a result.** Both full-stack configurations sit within one
+point of each other; they are tied.
+
+### 7.7 Dataset framing does not match a webcam
 
 Lower-body confidence never exceeds 0.22 in any WLASL clip, so the dataset cannot
 answer any question about wide framing — the stratification attempted for that
@@ -541,7 +584,7 @@ it is the binding one. Source hand size is the likely reason: ~40 px median in t
 ## 8. Open items
 
 **Not tested on a real signer yet, and this is now the binding risk.** Every
-number here comes from held-out *dataset* signers. §7.6 documents five
+number here comes from held-out *dataset* signers. §7.7 documents five
 occasions where a conclusion measured on clips was reversed on a live webcam —
 swapped hand labels, the duplicate threshold, the dedicated hand model,
 `performance` mode, and (the one agreement) the 0.7 presence threshold. The
