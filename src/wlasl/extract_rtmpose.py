@@ -130,6 +130,28 @@ def hand_confidences(scores):
             float(np.asarray(scores)[RIGHT_HAND].mean()))
 
 
+def hand_point_confidences(scores):
+    """Les 42 confiances, point par point : 21 a gauche puis 21 a droite.
+
+    La moyenne par main cache le cas courant d une main correcte avec deux
+    doigts rates, et c est precisement ce qui pollue le repliement. Les garder
+    rend gratuits, apres coup, le reglage du seuil, une ponderation par doigt
+    et le choix entre filtrage dur et filtrage doux : autant de questions qui
+    coutent sinon une reextraction de 80 minutes chacune.
+    """
+    scores = np.asarray(scores)
+    return np.concatenate([scores[LEFT_HAND], scores[RIGHT_HAND]]).astype(np.float32)
+
+
+# En mode brut, aucune main n est ecartee et l on enregistre de quoi appliquer
+# plus tard, a l entrainement, les trois filtres : le seuil de confiance (via
+# hand_scores et hand_point_scores), le hors-cadre (via hand_inside) et
+# l arbitrage des mains inventees (via hand_conflict). Une extraction, puis
+# toutes ces questions deviennent des options a l entrainement au lieu de
+# 80 minutes de reextraction chacune.
+RAW_MODE = False
+
+
 def frame_features(keypoints, scores, width, height):
     """Vecteur (104,) ancre au corps. Retourne (vecteur, personne_vue).
 
@@ -158,21 +180,40 @@ def frame_features(keypoints, scores, width, height):
     left_visible = float(scores[LEFT_HAND].mean()) >= HAND_SCORE_THRESHOLD
     right_visible = float(scores[RIGHT_HAND].mean()) >= HAND_SCORE_THRESHOLD
 
-    # Une main dont la plupart des points tombent hors de l image n est pas
-    # exploitable : mieux vaut l annoncer absente que nourrir le modele de
-    # coordonnees extrapolees.
-    if left_visible and inside_fraction(keypoints[LEFT_HAND], width, height) < INSIDE_THRESHOLD:
-        left_visible = False
-    if right_visible and inside_fraction(keypoints[RIGHT_HAND], width, height) < INSIDE_THRESHOLD:
-        right_visible = False
-
-    # Le modele predit toujours 21 points par main, meme quand une seule est
-    # visible, et les pose alors souvent sur celle qui est la. Le critere et
-    # son justificatif sont dans hand_identity.py, partage avec les demos.
-    left_visible, right_visible, _ = resolve(
+    # Le conflit est TOUJOURS calcule, mais en mode brut il est seulement
+    # enregistre au lieu d etre applique.
+    _, _, conflict = resolve(
         left_visible, right_visible,
         keypoints[LEFT_HAND][0], keypoints[RIGHT_HAND][0],
         keypoints[COCO_LEFT_WRIST], keypoints[COCO_RIGHT_WRIST],
+    )
+
+    if not RAW_MODE:
+        # Une main dont la plupart des points tombent hors de l image n est
+        # pas exploitable : mieux vaut l annoncer absente que nourrir le
+        # modele de coordonnees extrapolees.
+        if left_visible and inside_fraction(keypoints[LEFT_HAND], width, height) < INSIDE_THRESHOLD:
+            left_visible = False
+        if right_visible and inside_fraction(keypoints[RIGHT_HAND], width, height) < INSIDE_THRESHOLD:
+            right_visible = False
+
+        # Le modele predit toujours 21 points par main, meme quand une seule
+        # est visible, et les pose alors souvent sur celle qui est la. Le
+        # critere est dans hand_identity.py, partage avec les demos.
+        left_visible, right_visible, _ = resolve(
+            left_visible, right_visible,
+            keypoints[LEFT_HAND][0], keypoints[RIGHT_HAND][0],
+            keypoints[COCO_LEFT_WRIST], keypoints[COCO_RIGHT_WRIST],
+        )
+    else:
+        # Rien n est ecarte : les coordonnees des deux mains sont ecrites
+        # telles quelles, quelle que soit leur confiance.
+        left_visible = right_visible = True
+
+    frame_features.last_conflict = bool(conflict)
+    frame_features.last_inside = (
+        float(inside_fraction(keypoints[LEFT_HAND], width, height)),
+        float(inside_fraction(keypoints[RIGHT_HAND], width, height)),
     )
 
     offset = 0
@@ -223,6 +264,9 @@ def process_clip(model, record):
 
     sequence = []
     confidences = []
+    point_confidences = []
+    insides = []
+    conflicts = []
     detected = 0
 
     capture.set(cv2.CAP_PROP_POS_FRAMES, start)
@@ -241,12 +285,19 @@ def process_clip(model, record):
                 if len(keypoints) == 0:
                     sequence.append(np.zeros(FEATURE_DIM, dtype=np.float32))
                     confidences.append((0.0, 0.0))
+                    point_confidences.append(np.zeros(HAND_POINTS * 2, dtype=np.float32))
+                    insides.append((0.0, 0.0))
+                    conflicts.append(False)
                 else:
                     vector, found = frame_features(
                         np.asarray(keypoints)[0], np.asarray(scores)[0], width, height
                     )
                     sequence.append(vector)
                     confidences.append(hand_confidences(np.asarray(scores)[0]))
+                    point_confidences.append(
+                        hand_point_confidences(np.asarray(scores)[0]))
+                    insides.append(getattr(frame_features, "last_inside", (0.0, 0.0)))
+                    conflicts.append(getattr(frame_features, "last_conflict", False))
                     detected += found
 
             index += 1
@@ -267,7 +318,11 @@ def process_clip(model, record):
         out_path,
         features=np.array(sequence, dtype=np.float32),
         hand_scores=np.array(confidences, dtype=np.float32),
+        hand_point_scores=np.array(point_confidences, dtype=np.float32),
+        hand_inside=np.array(insides, dtype=np.float32),
+        hand_conflict=np.array(conflicts, dtype=bool),
         hand_threshold=HAND_SCORE_THRESHOLD,
+        raw_mode=RAW_MODE,
         gloss=record["gloss"],
         signer_id=record["signer_id"],
         video_id=record["video_id"],
@@ -278,7 +333,7 @@ def process_clip(model, record):
 
 
 def main():
-    global HAND_SCORE_THRESHOLD, FEATURES_DIR
+    global HAND_SCORE_THRESHOLD, FEATURES_DIR, RAW_MODE
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vocab", type=int, default=100)
@@ -286,7 +341,17 @@ def main():
     parser.add_argument("--mode", default="balanced",
                         choices=("performance", "lightweight", "balanced"))
     parser.add_argument("--hand-score", type=float, default=HAND_SCORE_THRESHOLD,
-                        help="confiance minimale pour declarer une main presente")
+                        help="confiance minimale pour declarer une main presente. "
+                             "A 0.0 rien n est ecarte et les coordonnees sont "
+                             "toutes conservees : comme les confiances sont "
+                             "sauvegardees, tout seuil peut alors etre applique "
+                             "a l entrainement sans reextraire.")
+    parser.add_argument("--raw", action="store_true",
+                        help="ne rien ecarter : toutes les coordonnees sont "
+                             "ecrites, et les confiances, le hors-cadre et les "
+                             "conflits sont enregistres pour etre appliques a "
+                             "l entrainement. Une seule extraction suffit alors "
+                             "a explorer tous les filtrages.")
     parser.add_argument("--out-dir", default=FEATURES_DIR,
                         help="ecrire ailleurs, pour comparer deux reglages "
                              "sans ecraser les features existantes")
@@ -294,6 +359,7 @@ def main():
 
     HAND_SCORE_THRESHOLD = args.hand_score
     FEATURES_DIR = args.out_dir
+    RAW_MODE = args.raw
 
     from rtmlib import Wholebody
 
@@ -318,7 +384,8 @@ def main():
     provider = model.pose_model.session.get_providers()[0]
 
     print(f"WLASL{args.vocab} : {len(todo)} clips")
-    print(f"seuil de presence des mains : {HAND_SCORE_THRESHOLD}")
+    print(f"seuil de presence des mains : "
+          f"{'aucun (mode brut)' if RAW_MODE else HAND_SCORE_THRESHOLD}")
     print(f"sortie : {FEATURES_DIR}")
     print(f"provider : {provider}")
     if provider != "CUDAExecutionProvider":

@@ -241,7 +241,7 @@ def time_warp(sequence, rng, low=0.8, high=1.25):
     return pad_sequence(warped)
 
 
-def augment_batch(batch, rng, layout=None):
+def augment_batch(batch, rng, layout=None, hand_dropout=0.0):
     out = np.empty_like(batch)
 
     for i, sequence in enumerate(batch):
@@ -266,6 +266,10 @@ def augment_batch(batch, rng, layout=None):
     flip = rng.random(len(out)) < 0.5
     if flip.any():
         out[flip] = mirror(out[flip], layout)
+
+    if hand_dropout > 0.0:
+        out = drop_hand(out, rng, layout or Layout.from_dim(out.shape[-1]),
+                        probability=hand_dropout)
 
     return out
 
@@ -383,6 +387,130 @@ FINGERS = [
 # Indices dans POSE_KEYPOINTS = [nez, epG, epD, coudeG, coudeD,
 #                                poignetG, poignetD, hancheG, hancheD]
 POSE_NOSE = 0
+
+
+def interpolate_gaps(batch, layout, max_gap=3):
+    """Comble les disparitions courtes d une main par interpolation lineaire.
+
+    A seuil 0.7 une main n est annoncee que dans ~60% des frames, donc elle
+    clignote au milieu d un signe et le modele recoit des zeros brutaux au
+    lieu d une trajectoire. Les coordonnees manquantes ne sont PAS derivables
+    par le GRU : il ne peut pas inventer ou se trouvait la main.
+
+    On ne comble que les trous bornes des DEUX cotes par une frame presente,
+    ce qui exclut naturellement le remplissage de fin de sequence. Le drapeau
+    passe a 1 puisque la position est une estimation raisonnable ; c est la
+    colonne de confiance, restee basse, qui dit au modele de s en defier —
+    --interpolate a donc tout interet a etre utilise avec --confidence.
+    """
+    out = batch.copy()
+    hand_block = layout.hand_block
+
+    for sequence in range(len(out)):
+        for flag_index, start in ((layout.left_flag, 0),
+                                  (layout.right_flag, hand_block)):
+            present = out[sequence, :, flag_index] > 0.5
+            if present.sum() < 2:
+                continue
+
+            indices = np.flatnonzero(present)
+            for before, after in zip(indices, indices[1:]):
+                gap = after - before - 1
+                if gap <= 0 or gap > max_gap:
+                    continue
+                left = out[sequence, before, start:start + hand_block]
+                right = out[sequence, after, start:start + hand_block]
+                for step in range(1, gap + 1):
+                    weight = step / (gap + 1)
+                    out[sequence, before + step, start:start + hand_block] = (
+                        (1.0 - weight) * left + weight * right)
+                    out[sequence, before + step, flag_index] = 1.0
+
+    return out
+
+
+def smooth_confidence(batch, layout, window=5):
+    """Moyenne temporelle ponderee par la confiance.
+
+    La gigue mesuree vaut 0.0359 sur les bonnes frames et 0.1408 sur les
+    mauvaises : tirer les frames peu sures vers leurs voisines attaque
+    directement cet ecart.
+
+    Un GRU bidirectionnel pourrait en principe moyenner lui-meme, donc un
+    lissage AVEUGLE serait une re-derivation et devrait ne rien rapporter
+    (section 4). Celui-ci ne l est pas : la ponderation vient de la confiance,
+    une information exterieure aux coordonnees. C est le premier cas ou la
+    regle est ambigue, et c est une raison de le tester.
+
+    Ne s applique qu aux coordonnees des mains, jamais aux drapeaux, a la pose
+    ni aux confiances elles-memes.
+    """
+    if layout.tail != 2:
+        raise ValueError("--smooth a besoin des confiances : ajoute --confidence")
+
+    out = batch.copy()
+    half = window // 2
+    hand_block = layout.hand_block
+
+    for flag_index, start, conf_index in ((layout.left_flag, 0, -2),
+                                          (layout.right_flag, hand_block, -1)):
+        weights = np.where(batch[..., flag_index] > 0.5,
+                           np.maximum(batch[..., conf_index], 1e-3), 0.0)
+
+        block = batch[..., start:start + hand_block]
+        total = np.zeros_like(weights)
+        stacked = np.zeros_like(block)
+
+        for shift in range(-half, half + 1):
+            rolled_w = np.roll(weights, shift, axis=1)
+            rolled_b = np.roll(block, shift, axis=1)
+            # np.roll est circulaire : on annule ce qui a fait le tour.
+            if shift > 0:
+                rolled_w[:, :shift] = 0.0
+            elif shift < 0:
+                rolled_w[:, shift:] = 0.0
+            total += rolled_w
+            stacked += rolled_b * rolled_w[..., None]
+
+        safe = total > 1e-6
+        smoothed = np.where(safe[..., None], stacked / np.maximum(total, 1e-6)[..., None],
+                            block)
+        # Une main absente garde ses zeros.
+        keep = (batch[..., flag_index] > 0.5)[..., None]
+        out[..., start:start + hand_block] = np.where(keep, smoothed, block)
+
+    return out
+
+
+def drop_hand(batch, rng, layout, probability=0.3, max_span=12):
+    """Efface une main sur un intervalle de frames, au hasard.
+
+    En direct les mains disparaissent : couverture ~60% a seuil 0.7, et cinq
+    desaccords mesures entre les clips et une vraie webcam (section 7.7). Le
+    modele n a jamais ete entraine a cela. C est la seule des quatre pistes
+    qui vise l ecart entrainement/direct plutot que la qualite des features.
+    """
+    out = batch.copy()
+    hand_block = layout.hand_block
+    length = out.shape[1]
+
+    for sequence in range(len(out)):
+        if rng.random() >= probability:
+            continue
+        side = rng.integers(2)
+        flag_index = layout.left_flag if side == 0 else layout.right_flag
+        start = 0 if side == 0 else hand_block
+        conf_index = -2 if side == 0 else -1
+
+        span = int(rng.integers(2, max_span + 1))
+        begin = int(rng.integers(0, max(length - span, 1)))
+
+        out[sequence, begin:begin + span, start:start + hand_block] = 0.0
+        out[sequence, begin:begin + span, flag_index] = 0.0
+        if layout.tail == 2:
+            out[sequence, begin:begin + span, conf_index] = 0.0
+
+    return out
 
 
 def add_symmetry(batch, layout=None):
@@ -637,6 +765,16 @@ def main():
                              "continue, en plus du drapeau binaire. Le modele "
                              "ne peut aujourd hui pas distinguer une main a "
                              "0.71 d une a 0.99.")
+    parser.add_argument("--interpolate", type=int, default=0, metavar="N",
+                        help="combler les disparitions de main de N frames ou "
+                             "moins par interpolation lineaire")
+    parser.add_argument("--smooth", type=int, default=0, metavar="W",
+                        help="lissage temporel des mains sur W frames, pondere "
+                             "par la confiance (exige --confidence)")
+    parser.add_argument("--hand-dropout", type=float, default=0.0,
+                        help="probabilite d effacer une main sur un intervalle, "
+                             "a l entrainement, pour encaisser les pertes de "
+                             "detection en direct")
     parser.add_argument("--symmetry", action="store_true",
                         help="deux scalaires de symetrie entre les mains")
     parser.add_argument("--vocab-from", default=None,
@@ -702,6 +840,26 @@ def main():
     tail = 2 if args.confidence else 0
     layout = Layout.from_dim(features.shape[2] - tail)
     layout.tail = tail
+
+    # Les deux agissent sur la disposition BRUTE, avant mirror et avant le
+    # passage au modele : combler puis lisser une trajectoire n a de sens que
+    # sur des coordonnees, pas sur des scalaires derives.
+    if args.interpolate:
+        filled = int((features[..., layout.left_flag] > 0.5).sum()
+                     + (features[..., layout.right_flag] > 0.5).sum())
+        features = interpolate_gaps(features, layout, args.interpolate)
+        after = int((features[..., layout.left_flag] > 0.5).sum()
+                    + (features[..., layout.right_flag] > 0.5).sum())
+        # Le denominateur est le nombre de CRENEAUX de main (deux par frame),
+        # padding inclus ; diviser par les frames donnerait un taux sur 2.
+        slots = features[..., 0].size * 2
+        print(f"interpolation (<= {args.interpolate} frames) : "
+              f"{after - filled} mains comblees sur {slots} creneaux, "
+              f"{filled / slots:.1%} -> {after / slots:.1%}")
+
+    if args.smooth:
+        features = smooth_confidence(features, layout, args.smooth)
+        print(f"lissage pondere par la confiance sur {args.smooth} frames")
 
     def to_model(batch):
         # Les indices de profondeur se calculent sur la disposition COMPLETE
@@ -791,7 +949,8 @@ def main():
                                    args.cell, args.label_smoothing)
                 for _ in range(args.pretrain_epochs):
                     order = rng.permutation(int(keep.sum()))
-                    px = augment_batch(pretrain_x[keep][order], rng, layout)
+                    px = augment_batch(pretrain_x[keep][order], rng, layout,
+                                       args.hand_dropout)
                     if args.velocity:
                         px = add_velocity(px)
                     px = to_model(px)
@@ -809,7 +968,8 @@ def main():
             curve = []
             for epoch in range(args.epochs):
                 order = rng.permutation(len(train_x))
-                batch_x = augment_batch(train_x[order], rng, layout)
+                batch_x = augment_batch(train_x[order], rng, layout,
+                                        args.hand_dropout)
                 if args.velocity:
                     batch_x = add_velocity(batch_x)
                 batch_x = to_model(batch_x)
@@ -879,6 +1039,9 @@ def main():
                 "vocab": args.vocab,
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,
+                "interpolate": args.interpolate,
+                "smooth": args.smooth,
+                "hand_dropout": args.hand_dropout,
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),

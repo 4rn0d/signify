@@ -526,6 +526,56 @@ so it accepts a `global` declaration placed after a read of the same name.
 `py_compile.compile(..., doraise=True)` catches it. Several files "verified" with
 `ast.parse` during this phase had only their grammar checked.
 
+### 7.5b Four more ideas, all rejected
+
+Measured against rich + confidence (0.5892), paired on the plateau metric:
+
+```
+interpolating hand gaps <=3 frames   0.5756   -0.0136  t -2.54  0/5  noise
+confidence-weighted smoothing        0.5672   -0.0220  t -3.07  1/5  HARMFUL
+random hand erasure, p=0.3           0.5843   -0.0049  t -0.47  1/5  noise
+```
+
+**Interpolation** was proposed on the premise that hands flicker mid-sign.
+They do not: of 13265 absent hand-slots only 489 (3.7%) sit in a gap bounded
+on both sides by a present frame, because the absences are long — those are
+one-handed signs. Where it does fire it appears to hurt, which is coherent:
+a zero is honestly flagged absent, whereas a filled frame asserts a position
+the model then trusts.
+
+**Confidence-weighted smoothing is the instructive failure.** The argument for
+it was that it escapes the re-derivation rule, since the weighting comes from
+confidence, which is information outside the coordinates. It does not escape.
+A bidirectional GRU reading 80 frames can already average over time, and
+handing it pre-averaged coordinates *removes* detail it was using. Jitter was
+measured and assumed to be noise; some of it is signal.
+
+That sharpens why confidence itself works at +1.6: it helps as an **input the
+model conditions on**, not as a correction applied on the model's behalf.
+Telling the model what to distrust beats distrusting for it. The rule, restated:
+
+```
+give the model information it cannot derive          -> can win
+do the deriving for it, however well motivated       -> loses
+```
+
+**Random hand erasure** is the only one of the four that leaves the features
+alone and changes the training distribution instead, so the rule does not
+apply to it. It costs nothing measurable (-0.5, t=-0.47) and aims at
+robustness to dropout, which a held-out-dataset benchmark barely exercises —
+its value, if any, would show on a live camera. Unproven, so not adopted.
+
+A fifth change was infrastructural rather than an improvement: `--raw`
+extraction keeps every coordinate and stores `hand_scores`,
+`hand_point_scores` (42 per frame), `hand_inside` and `hand_conflict`, so the
+confidence threshold, hard versus soft gating, per-finger weighting, the
+off-frame cutoff and whether to apply the phantom-hand arbitration at all all
+become training-time flags. Each of those previously cost an 80-minute
+re-extraction. Note that `--hand-score 0.0` alone is not sufficient: the
+off-frame filter and the arbitration delete hands irrespective of threshold.
+
+Running total: 22 experiments, 5 of which gained anything.
+
 ### 7.6 Two metrics, and a reporting error
 
 Every paired t-test in this phase was run on `per_fold`, which holds the
