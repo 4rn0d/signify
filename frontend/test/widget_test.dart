@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:frontend/main.dart';
@@ -6,6 +8,11 @@ void main() {
   testWidgets('opens on the Signify menu and navigates to training', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(const SignifyApp());
 
     expect(find.text('Signify'), findsOneWidget);
@@ -24,7 +31,28 @@ void main() {
     expect(find.text('Learn the alphabet'), findsOneWidget);
     expect(find.text('A'), findsOneWidget);
     expect(find.text('Practice the ASL sign for A.'), findsOneWidget);
+    expect(find.byTooltip('Turn camera on'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
 
+    debugDefaultTargetPlatformOverride = TargetPlatform.fuchsia;
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+    await tester.tap(find.text('Practice with camera (optional)'));
+    await tester.pump();
+
+    expect(
+      find.text('Camera preview is not supported on this platform.'),
+      findsOneWidget,
+    );
+    expect(find.text('Can you make this sign?'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+
+    tester.view.physicalSize = const Size(1200, 800);
+    await tester.pump();
+    expect(find.text('Can you make this sign?'), findsOneWidget);
+
+    debugDefaultTargetPlatformOverride = null;
     await tester.tap(find.byTooltip('Back to menu'));
     await tester.pumpAndSettle();
 

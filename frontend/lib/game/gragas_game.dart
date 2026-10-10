@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:math' as math;
 
 import 'package:flame/cache.dart';
 import 'package:flame/components.dart';
@@ -6,6 +7,8 @@ import 'package:flame/game.dart';
 import 'package:flame/sprite.dart';
 
 class GragasGame extends FlameGame {
+  SpriteAnimationComponent? _gragas;
+
   GragasGame() {
     images = Images(prefix: 'assets/');
   }
@@ -26,21 +29,27 @@ class GragasGame extends FlameGame {
       stepTime: 0.14,
     );
 
-    add(
-      SpriteAnimationComponent(
-        animation: animation,
-        size: Vector2.all(240),
-        anchor: Anchor.center,
-        position: size / 2,
-      ),
+    _gragas = SpriteAnimationComponent(
+      animation: animation,
+      anchor: Anchor.center,
     );
+    add(_gragas!);
+    _layoutGragas();
   }
 
   @override
   void onGameResize(Vector2 size) {
     super.onGameResize(size);
-    for (final component in children.whereType<SpriteAnimationComponent>()) {
-      component.position = size / 2;
-    }
+    _layoutGragas();
+  }
+
+  void _layoutGragas() {
+    final gragas = _gragas;
+    if (gragas == null || size.x <= 0 || size.y <= 0) return;
+
+    final spriteSize = math.min(size.x * 0.8, size.y * 0.86);
+    gragas
+      ..size = Vector2.all(spriteSize)
+      ..position = Vector2(size.x / 2, size.y / 2);
   }
 }

@@ -1,116 +1,343 @@
+import 'dart:async';
+
+import 'package:camera/camera.dart';
+import 'package:camera_macos/camera_macos.dart';
 import 'package:flame/game.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../game/gragas_game.dart';
 
-class TrainingPage extends StatelessWidget {
+class TrainingPage extends StatefulWidget {
   const TrainingPage({super.key});
+
+  @override
+  State<TrainingPage> createState() => _TrainingPageState();
+}
+
+class _TrainingPageState extends State<TrainingPage>
+    with WidgetsBindingObserver {
+  CameraController? _cameraController;
+  CameraMacOSController? _macOSCameraController;
+  bool _cameraEnabgreatled = false;
+  bool _cameraLoading = false;
+  String? _cameraError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _cameraController?.dispose();
+    unawaited(_macOSCameraController?.destroy());
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      unawaited(_disableCamera());
+    }
+  }
+
+  Future<void> _toggleCamera() async {
+    if (_cameraLoading) return;
+
+    if (_cameraEnabled) {
+      await _disableCamera();
+      return;
+    }
+
+    setState(() {
+      _cameraLoading = true;
+      _cameraError = null;
+    });
+
+    CameraController? controller;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.macOS) {
+        if (!mounted) return;
+        setState(() {
+          _cameraEnabled = true;
+          _cameraLoading = false;
+        });
+      } else if (!kIsWeb &&
+          defaultTargetPlatform != TargetPlatform.android &&
+          defaultTargetPlatform != TargetPlatform.iOS &&
+          defaultTargetPlatform != TargetPlatform.windows) {
+        setState(() {
+          _cameraLoading = false;
+          _cameraError = 'Camera preview is not supported on this platform.';
+        });
+      } else {
+        final cameras = await availableCameras();
+        if (cameras.isEmpty) {
+          throw CameraException(
+            'NoCameraAvailable',
+            'No camera was found on this device.',
+          );
+        }
+
+        final camera = cameras.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.front,
+          orElse: () => cameras.first,
+        );
+        controller = CameraController(
+          camera,
+          ResolutionPreset.medium,
+          enableAudio: false,
+        );
+        await controller.initialize();
+
+        if (!mounted) {
+          await controller.dispose();
+          return;
+        }
+
+        setState(() {
+          _cameraController = controller;
+          _cameraEnabled = true;
+          _cameraLoading = false;
+        });
+      }
+    } on CameraException catch (error) {
+      await controller?.dispose();
+      if (!mounted) return;
+      setState(() {
+        _cameraLoading = false;
+        _cameraEnabled = false;
+        _cameraController = null;
+        _cameraError = _cameraErrorMessage(error);
+      });
+    } catch (error) {
+      await controller?.dispose();
+      if (!mounted) return;
+      setState(() {
+        _cameraLoading = false;
+        _cameraEnabled = false;
+        _cameraController = null;
+        _cameraError = 'Could not open the camera: $error';
+      });
+    }
+  }
+
+  Future<void> _disableCamera() async {
+    final cameraController = _cameraController;
+    final macOSCameraController = _macOSCameraController;
+    if (mounted) {
+      setState(() {
+        _cameraEnabled = false;
+        _cameraLoading = false;
+        _cameraController = null;
+        _macOSCameraController = null;
+        _cameraError = null;
+      });
+    }
+    await cameraController?.dispose();
+    await macOSCameraController?.destroy();
+  }
+
+  void _onMacOSCameraInitialized(CameraMacOSController controller) {
+    if (!mounted || !_cameraEnabled) {
+      unawaited(controller.destroy());
+      return;
+    }
+    _macOSCameraController = controller;
+  }
+
+  String _cameraErrorMessage(CameraException error) {
+    return switch (error.code) {
+      'CameraAccessDenied' ||
+      'CameraAccessDeniedWithoutPrompt' ||
+      'CameraAccessRestricted' =>
+        'Camera access is unavailable. Check your device permissions.',
+      'NoCameraAvailable' => error.description ?? 'No camera was found.',
+      _ => error.description ?? 'Could not open the camera (${error.code}).',
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final cameraTooltip = _cameraEnabled ? 'Turn camera off' : 'Turn camera on';
 
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 600),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+        child: LayoutBuilder(
+          builder: (context, pageConstraints) {
+            final compact = pageConstraints.maxHeight < 820;
+
+            return Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1000),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    compact ? 8 : 20,
+                    20,
+                    compact ? 12 : 24,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      IconButton(
-                        tooltip: 'Back to menu',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.arrow_back_rounded),
+                      _TrainingHeader(
+                        colors: colors,
+                        onBack: () => Navigator.of(context).pop(),
                       ),
-                      const SizedBox(width: 4),
+                      SizedBox(height: compact ? 8 : 20),
+                      if (!compact) ...[
+                        Text(
+                          'Learn the alphabet',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Watch Gragas, then try the sign yourself.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'ALPHABET PRACTICE',
-                              style: Theme.of(context).textTheme.labelMedium
-                                  ?.copyWith(
-                                    color: colors.onSurfaceVariant,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1.2,
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: const LinearProgressIndicator(
-                                value: 1 / 26,
-                                minHeight: 8,
-                              ),
-                            ),
-                          ],
+                        child: LayoutBuilder(
+                          builder: (context, stageConstraints) {
+                            final sideBySide = stageConstraints.maxWidth >= 720;
+                            final characterPanel = _CharacterPanel(
+                              letterColor: colors.primary,
+                              borderColor: colors.outlineVariant,
+                            );
+                            final cameraPanel = _CameraPreviewPanel(
+                              isMacOS:
+                                  defaultTargetPlatform == TargetPlatform.macOS,
+                              controller: _cameraController,
+                              isLoading: _cameraLoading,
+                              error: _cameraError,
+                              onMacOSCameraInitialized:
+                                  _onMacOSCameraInitialized,
+                            );
+
+                            if (!_cameraEnabled) return characterPanel;
+
+                            if (sideBySide) {
+                              return Row(
+                                children: [
+                                  Expanded(flex: 5, child: characterPanel),
+                                  const SizedBox(width: 16),
+                                  Expanded(flex: 4, child: cameraPanel),
+                                ],
+                              );
+                            }
+
+                            return Column(
+                              children: [
+                                Expanded(flex: 6, child: characterPanel),
+                                const SizedBox(height: 12),
+                                Expanded(flex: 5, child: cameraPanel),
+                              ],
+                            );
+                          },
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        '1 / 26',
-                        style: Theme.of(context).textTheme.labelLarge
-                            ?.copyWith(fontWeight: FontWeight.bold),
+                      SizedBox(height: compact ? 8 : 12),
+                      _PracticePrompt(
+                        foregroundColor: colors.primary,
+                        textColor: colors.onSurface,
+                        secondaryTextColor: colors.onSurfaceVariant,
+                        borderColor: colors.outlineVariant,
+                        cameraEnabled: _cameraEnabled,
+                        cameraTooltip: cameraTooltip,
+                        cameraError: _cameraError,
+                        onCameraToggle: _toggleCamera,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 28),
-                  Text(
-                    'Learn the alphabet',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Watch Gragas, then try the sign yourself.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: colors.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Positioned.fill(
-                          child: GameWidget.controlled(
-                            gameFactory: GragasGame.new,
-                            backgroundBuilder: (context) =>
-                                const SizedBox.expand(),
-                          ),
-                        ),
-                        Positioned(
-                          top: 8,
-                          left: 12,
-                          right: 12,
-                          child: _SpeechBubble(
-                            letterColor: colors.primary,
-                            borderColor: colors.outlineVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _PracticePrompt(
-                    foregroundColor: colors.primary,
-                    textColor: colors.onSurface,
-                    secondaryTextColor: colors.onSurfaceVariant,
-                    borderColor: colors.outlineVariant,
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
+    );
+  }
+}
+
+class _TrainingHeader extends StatelessWidget {
+  const _TrainingHeader({required this.colors, required this.onBack});
+
+  final ColorScheme colors;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        IconButton(
+          tooltip: 'Back to menu',
+          onPressed: onBack,
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'ALPHABET PRACTICE',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: const LinearProgressIndicator(
+                  value: 1 / 26,
+                  minHeight: 8,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          '1 / 26',
+          style: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+}
+
+class _CharacterPanel extends StatelessWidget {
+  const _CharacterPanel({required this.letterColor, required this.borderColor});
+
+  final Color letterColor;
+  final Color borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _SpeechBubble(letterColor: letterColor, borderColor: borderColor),
+        const SizedBox(height: 4),
+        Expanded(
+          child: GameWidget.controlled(
+            gameFactory: GragasGame.new,
+            backgroundBuilder: (context) => const SizedBox.expand(),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -148,12 +375,22 @@ class _SpeechBubble extends StatelessWidget {
                 style: Theme.of(context).textTheme.headlineMedium
                     ?.copyWith(color: letterColor, fontWeight: FontWeight.w900),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Flexible(
                 child: Text(
                   'Can you make this sign?',
                   style: Theme.of(context).textTheme.bodyLarge
                       ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset(
+                  'assets/asl-signs/A.png',
+                  height: 64,
+                  width: 52,
+                  fit: BoxFit.contain,
                 ),
               ),
             ],
@@ -185,12 +422,20 @@ class _PracticePrompt extends StatelessWidget {
     required this.textColor,
     required this.secondaryTextColor,
     required this.borderColor,
+    required this.cameraEnabled,
+    required this.cameraTooltip,
+    required this.cameraError,
+    required this.onCameraToggle,
   });
 
   final Color foregroundColor;
   final Color textColor;
   final Color secondaryTextColor;
   final Color borderColor;
+  final bool cameraEnabled;
+  final String cameraTooltip;
+  final String? cameraError;
+  final VoidCallback onCameraToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -201,35 +446,175 @@ class _PracticePrompt extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: borderColor),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: foregroundColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(Icons.front_hand_rounded, color: foregroundColor),
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: foregroundColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(Icons.front_hand_rounded, color: foregroundColor),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your turn',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Practice the ASL sign for A.',
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: secondaryTextColor),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Your turn',
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(color: textColor, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'Practice the ASL sign for A.',
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: secondaryTextColor),
-                ),
-              ],
+          const SizedBox(height: 14),
+          Tooltip(
+            message: cameraTooltip,
+            child: FilledButton.tonalIcon(
+              onPressed: onCameraToggle,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(58),
+              ),
+              icon: Icon(
+                cameraEnabled
+                    ? Icons.videocam_rounded
+                    : Icons.videocam_outlined,
+                size: 30,
+              ),
+              label: Text(
+                cameraEnabled
+                    ? 'Turn camera off'
+                    : 'Practice with camera (optional)',
+              ),
             ),
+          ),
+          const SizedBox(height: 8),
+          if (cameraError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              cameraError!,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CameraPreviewPanel extends StatelessWidget {
+  const _CameraPreviewPanel({
+    required this.isMacOS,
+    required this.controller,
+    required this.isLoading,
+    required this.error,
+    required this.onMacOSCameraInitialized,
+  });
+
+  final bool isMacOS;
+  final CameraController? controller;
+  final bool isLoading;
+  final String? error;
+  final ValueChanged<CameraMacOSController> onMacOSCameraInitialized;
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = switch (true) {
+      _ when error != null => _CameraStatus(
+        icon: Icons.videocam_off_outlined,
+        message: error!,
+      ),
+      _ when isLoading => const _CameraStatus(
+        icon: Icons.videocam_outlined,
+        message: 'Opening camera…',
+        showProgress: true,
+      ),
+      _ when isMacOS => CameraMacOSView(
+        cameraMode: CameraMacOSMode.photo,
+        enableAudio: false,
+        fit: BoxFit.cover,
+        onCameraInizialized: onMacOSCameraInitialized,
+        onCameraLoading: (error) => _CameraStatus(
+          icon: Icons.videocam_off_outlined,
+          message: error == null
+              ? 'Requesting camera access…'
+              : 'Could not open the camera: $error',
+          showProgress: error == null,
+        ),
+      ),
+      _ when controller?.value.isInitialized == true => CameraPreview(
+        controller!,
+      ),
+      _ => const _CameraStatus(
+        icon: Icons.videocam_outlined,
+        message: 'Opening camera…',
+        showProgress: true,
+      ),
+    };
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 480),
+        child: AspectRatio(
+          aspectRatio: 4 / 3,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: ColoredBox(
+              color: Colors.black,
+              child: Center(child: preview),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CameraStatus extends StatelessWidget {
+  const _CameraStatus({
+    required this.icon,
+    required this.message,
+    this.showProgress = false,
+  });
+
+  final IconData icon;
+  final String message;
+  final bool showProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showProgress)
+            const CircularProgressIndicator()
+          else
+            Icon(icon, color: Colors.white, size: 48),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white),
           ),
         ],
       ),

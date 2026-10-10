@@ -35,6 +35,9 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   flame: ^1.38.2
+  camera: ^0.12.1
+  camera_macos: ^0.1.1
+  camera_windows: ^0.3.0
 
 dev_dependencies:
   flutter_test:
@@ -60,6 +63,7 @@ flutter:
 
   assets:
     - assets/Gragas32-Sheet.png
+    - assets/asl-signs/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
