@@ -6,14 +6,20 @@ role est d'estimer, pas de produire un modele. L'estimation faite
 des donnees — garder un fold de cote ne servirait qu'a repeter une mesure
 deja obtenue, en se privant de 20% des exemples.
 
-La configuration retenue est celle qui a gagne les 5 folds :
+La configuration retenue est celle mesuree a 0.6675 en validation croisee
+par signeur, soit 33x le hasard :
 
+  --features-dir data/wlasl/features_rtm07   RTMPose, seuil de main 0.7
   --variants dominant   une seule variante de signe par glose (+5.6)
-  --no-z                sans la profondeur, peu fiable sur une camera (+11.6
-                        avec le lissage et la TTA)
+  --rich                23 scalaires derives de x,y (+5.9)
+  --confidence          la confiance de chaque main, en continu (+1.6)
   --label-smoothing 0.1
-  --seeds 3             ensemble de 3 modeles (+5.3 avec le pre-entrainement)
+  --seeds 3             ensemble de 3 modeles
   --pretrain-vocab 100  pre-entrainement sur un vocabulaire elargi
+
+Pas de --no-z : RTMPose ne rend que x,y, il n y a pas de profondeur a
+retirer. Le seuil de 0.7 est deja applique a l extraction, donc rien a
+filtrer ici.
 
 La TTA (moyenne avec l'image miroir) est appliquee a l'inference, dans la
 demo : elle ne change rien a l'entrainement.
@@ -34,6 +40,7 @@ import tensorflow as tf
 
 from train_kfold import (
     MAX_LEN,
+    Layout,
     add_rich_features,
     augment_batch,
     build_model,
@@ -47,15 +54,27 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 META_PATH = os.path.join(MODELS_DIR, "wlasl_gru.meta.json")
-KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_everything.json")
+KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_rtm07_everything.json")
 
 
-def model_path(seed_index):
-    return os.path.join(MODELS_DIR, f"wlasl_gru_s{seed_index}.keras")
+def model_path(seed_index, extractor="rtmpose"):
+    """Un nom par extracteur.
+
+    Les deux configurations ecrivaient au MEME chemin, et comme *.keras est
+    ignore par git, entrainer l une ecrasait definitivement les poids de
+    l autre. C est arrive une fois.
+    """
+    suffix = "" if extractor == "mediapipe" else f"_{extractor}"
+    return os.path.join(MODELS_DIR, f"wlasl_gru{suffix}_s{seed_index}.keras")
+
+
+def meta_path(extractor="rtmpose"):
+    suffix = "" if extractor == "mediapipe" else f"_{extractor}"
+    return os.path.join(MODELS_DIR, f"wlasl_gru{suffix}.meta.json")
 
 
 def train_one(seed, features, labels, num_classes, args, pretrain=None,
-              keep_columns=None, rich=False):
+              keep_columns=None, rich=False, layout=None):
     """features arrive en 155 colonnes.
 
     Le retrait de la profondeur se fait JUSTE avant le modele : mirror(),
@@ -71,7 +90,7 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
         # Les features derivees se calculent sur la disposition COMPLETE
         # (indices des mains et de la pose codes en dur), donc avant la
         # selection de colonnes.
-        extra = add_rich_features(batch)[:, :, -23:] if rich else None
+        extra = add_rich_features(batch, layout)[:, :, -23:] if rich else None
 
         if keep_columns is not None:
             batch = batch[:, :, keep_columns]
@@ -94,7 +113,7 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
 
         for _ in range(args.pretrain_epochs):
             order = rng.permutation(len(pre_x))
-            batch = to_model(augment_batch(pre_x[order], rng))
+            batch = to_model(augment_batch(pre_x[order], rng, layout))
             target = pre_y[order]
             if args.label_smoothing > 0:
                 target = tf.keras.utils.to_categorical(target, pre_classes)
@@ -107,7 +126,7 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
 
     for epoch in range(args.epochs):
         order = rng.permutation(len(features))
-        batch = to_model(augment_batch(features[order], rng))
+        batch = to_model(augment_batch(features[order], rng, layout))
         target = labels[order]
         if args.label_smoothing > 0:
             target = tf.keras.utils.to_categorical(target, num_classes)
@@ -130,7 +149,14 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--vocab", type=int, default=50)
     parser.add_argument("--variants", default="dominant")
-    parser.add_argument("--no-z", action="store_true", default=True)
+    parser.add_argument("--features-dir",
+                        default=os.path.join(PROJECT_ROOT, "data", "wlasl",
+                                             "features_rtm07"),
+                        help="dossier de features ; par defaut RTMPose a 0.7")
+    parser.add_argument("--confidence", action="store_true", default=True,
+                        help="confiance de chaque main en valeur continue")
+    parser.add_argument("--no-z", action="store_true", default=False,
+                        help="MediaPipe seulement : RTMPose n a pas de z")
     parser.add_argument("--rich", action="store_true", default=True,
                         help="23 scalaires derives de x,y")
     parser.add_argument("--label-smoothing", type=float, default=0.1)
@@ -139,7 +165,8 @@ def main():
     parser.add_argument("--pretrain-epochs", type=int, default=60)
     args = parser.parse_args()
 
-    records = load_sequences(args.variants)
+    records = load_sequences(args.variants, args.features_dir,
+                             with_confidence=args.confidence)
 
     counts = collections.Counter(r["gloss"] for r in records)
     target_glosses = {g for g, _ in counts.most_common(args.vocab)}
@@ -155,6 +182,14 @@ def main():
     feature_dim = (len(keep_columns) if keep_columns is not None
                    else features.shape[2]) + (23 if args.rich else 0)
 
+    # La disposition ne peut pas etre devinee quand il y a une queue : 106
+    # colonnes se lisent aussi bien comme 9 points de pose plus 2 confiances
+    # que comme 10 points de pose, et le second ferait negater une confiance
+    # au miroir. Voir Layout.from_dim.
+    tail = 2 if args.confidence else 0
+    layout = Layout.from_dim(features.shape[2] - tail)
+    layout.tail = tail
+
     print(f"{len(selected)} sequences, {len(glosses)} gloses, "
           f"{feature_dim} dimensions")
     print(f"{args.seeds} modeles x {args.epochs} epochs\n")
@@ -163,6 +198,8 @@ def main():
     if args.pretrain_vocab:
         wide = {g for g, _ in counts.most_common(args.pretrain_vocab)}
         extra = [r for r in records if r["gloss"] in wide]
+        # records vient DEJA du bon dossier et des bonnes colonnes : pas de
+        # second load_sequences, qui relirait le dossier par defaut.
         wide_index = {g: i for i, g in enumerate(sorted(wide))}
 
         pre_x = np.stack([pad_sequence(r["features"]) for r in extra])
@@ -174,12 +211,15 @@ def main():
         )
         print(f"pre-entrainement : {len(extra)} sequences, {len(wide)} gloses\n")
 
+    extractor = "rtmpose" if "rtm" in args.features_dir else "mediapipe"
+
     saved = []
     for seed_index in range(args.seeds):
         print(f"  modele {seed_index + 1}/{args.seeds}")
         model = train_one(args.seed + seed_index * 100, features, labels,
-                          len(glosses), args, pretrain, keep_columns, args.rich)
-        path = model_path(seed_index)
+                          len(glosses), args, pretrain, keep_columns,
+                          args.rich, layout)
+        path = model_path(seed_index, extractor)
         model.save(path)
         saved.append(os.path.relpath(path, PROJECT_ROOT))
 
@@ -208,6 +248,9 @@ def main():
         "feature_dim": int(feature_dim),
         "drop_z": bool(args.no_z),
         "rich": bool(args.rich),
+        "confidence": bool(args.confidence),
+        "features_dir": os.path.relpath(args.features_dir, PROJECT_ROOT),
+        "extractor": extractor,
         "keep_columns": keep_columns.tolist() if keep_columns is not None else None,
         "units": args.units,
         "epochs": args.epochs,
@@ -223,11 +266,11 @@ def main():
         ),
     }
 
-    with open(META_PATH, "w", encoding="utf-8") as handle:
+    with open(meta_path(extractor), "w", encoding="utf-8") as handle:
         json.dump(metadata, handle, ensure_ascii=False, indent=2)
 
     print(f"\n  {len(saved)} modeles sauvegardes")
-    print(f"  fiche : {META_PATH}")
+    print(f"  fiche : {meta_path(extractor)}")
     if expected:
         print(f"  precision attendue (k-fold) : {expected['mean']:.4f} "
               f"+- {expected['std']:.4f}  (hasard {expected['chance']})")
