@@ -28,11 +28,10 @@ extension on GragasAnimation {
   };
 
   bool get loops => switch (this) {
-    GragasAnimation.idle ||
-    GragasAnimation.walk ||
-    GragasAnimation.drinkBarrel => true,
+    GragasAnimation.idle || GragasAnimation.walk => true,
     GragasAnimation.rollBarrel ||
     GragasAnimation.dash ||
+    GragasAnimation.drinkBarrel ||
     GragasAnimation.throwBarrel => false,
   };
 }
@@ -49,6 +48,7 @@ class GragasGame extends FlameGame {
   void setAnimation(GragasAnimation animation) {
     _currentAnimation = animation;
     _gragas?.current = animation;
+    _gragas?.animationTicker?.reset();
   }
 
   @override

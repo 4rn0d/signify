@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:frontend/main.dart';
 import 'package:frontend/widgets/gragas_avatar.dart';
 
@@ -58,7 +57,10 @@ void main() {
 
     await tester.tap(find.text('Done'));
     await tester.pump();
+    final avatar = tester.widget<GragasAvatar>(find.byType(GragasAvatar));
     expect(find.text('Practice the ASL sign for B.'), findsOneWidget);
+    expect(avatar.animation, GragasAnimation.drinkBarrel);
+    expect(avatar.animationTrigger, 1);
     expect(find.text('2 / 26'), findsOneWidget);
     expect(
       (tester.widget<Image>(find.byType(Image)).image as AssetImage).assetName,
@@ -69,6 +71,10 @@ void main() {
       await tester.tap(find.text('Done'));
       await tester.pump();
     }
+    expect(
+      tester.widget<GragasAvatar>(find.byType(GragasAvatar)).animationTrigger,
+      25,
+    );
     expect(find.text('Practice the ASL sign for Z.'), findsOneWidget);
     expect(find.text('26 / 26'), findsOneWidget);
     expect(

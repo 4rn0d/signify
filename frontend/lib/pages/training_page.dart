@@ -22,6 +22,8 @@ class _TrainingPageState extends State<TrainingPage>
   bool _cameraLoading = false;
   int _currentLetterIndex = 0;
   bool _trainingComplete = false;
+  GragasAnimation _gragasAnimation = GragasAnimation.idle;
+  int _gragasAnimationTrigger = 0;
   String? _cameraError;
 
   String get _currentLetter => String.fromCharCode(65 + _currentLetterIndex);
@@ -30,6 +32,8 @@ class _TrainingPageState extends State<TrainingPage>
     if (!signCompleted || _trainingComplete) return;
 
     setState(() {
+      _gragasAnimation = GragasAnimation.drinkBarrel;
+      _gragasAnimationTrigger++;
       if (_currentLetterIndex == 25) {
         _trainingComplete = true;
       } else {
@@ -230,6 +234,8 @@ class _TrainingPageState extends State<TrainingPage>
                             final sideBySide = stageConstraints.maxWidth >= 720;
                             final characterPanel = _CharacterPanel(
                               letter: _currentLetter,
+                              gragasAnimation: _gragasAnimation,
+                              gragasAnimationTrigger: _gragasAnimationTrigger,
                               letterColor: colors.primary,
                               borderColor: colors.outlineVariant,
                             );
@@ -348,11 +354,15 @@ class _TrainingHeader extends StatelessWidget {
 class _CharacterPanel extends StatelessWidget {
   const _CharacterPanel({
     required this.letter,
+    required this.gragasAnimation,
+    required this.gragasAnimationTrigger,
     required this.letterColor,
     required this.borderColor,
   });
 
   final String letter;
+  final GragasAnimation gragasAnimation;
+  final int gragasAnimationTrigger;
   final Color letterColor;
   final Color borderColor;
 
@@ -366,7 +376,12 @@ class _CharacterPanel extends StatelessWidget {
           borderColor: borderColor,
         ),
         const SizedBox(height: 4),
-        Expanded(child: const GragasAvatar()),
+        Expanded(
+          child: GragasAvatar(
+            animation: gragasAnimation,
+            animationTrigger: gragasAnimationTrigger,
+          ),
+        ),
       ],
     );
   }
