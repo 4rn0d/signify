@@ -19,9 +19,25 @@ class _TrainingPageState extends State<TrainingPage>
     with WidgetsBindingObserver {
   CameraController? _cameraController;
   CameraMacOSController? _macOSCameraController;
-  bool _cameraEnabgreatled = false;
+  bool _cameraEnabled = false;
   bool _cameraLoading = false;
+  int _currentLetterIndex = 0;
+  bool _trainingComplete = false;
   String? _cameraError;
+
+  String get _currentLetter => String.fromCharCode(65 + _currentLetterIndex);
+
+  void _onSignChecked(bool signCompleted) {
+    if (!signCompleted || _trainingComplete) return;
+
+    setState(() {
+      if (_currentLetterIndex == 25) {
+        _trainingComplete = true;
+      } else {
+        _currentLetterIndex++;
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -187,6 +203,9 @@ class _TrainingPageState extends State<TrainingPage>
                     children: [
                       _TrainingHeader(
                         colors: colors,
+                        completedLetters: _trainingComplete
+                            ? 26
+                            : _currentLetterIndex + 1,
                         onBack: () => Navigator.of(context).pop(),
                       ),
                       SizedBox(height: compact ? 8 : 20),
@@ -211,6 +230,7 @@ class _TrainingPageState extends State<TrainingPage>
                           builder: (context, stageConstraints) {
                             final sideBySide = stageConstraints.maxWidth >= 720;
                             final characterPanel = _CharacterPanel(
+                              letter: _currentLetter,
                               letterColor: colors.primary,
                               borderColor: colors.outlineVariant,
                             );
@@ -252,10 +272,13 @@ class _TrainingPageState extends State<TrainingPage>
                         textColor: colors.onSurface,
                         secondaryTextColor: colors.onSurfaceVariant,
                         borderColor: colors.outlineVariant,
+                        letter: _currentLetter,
+                        trainingComplete: _trainingComplete,
                         cameraEnabled: _cameraEnabled,
                         cameraTooltip: cameraTooltip,
                         cameraError: _cameraError,
                         onCameraToggle: _toggleCamera,
+                        onSignChecked: _onSignChecked,
                       ),
                     ],
                   ),
@@ -270,13 +293,20 @@ class _TrainingPageState extends State<TrainingPage>
 }
 
 class _TrainingHeader extends StatelessWidget {
-  const _TrainingHeader({required this.colors, required this.onBack});
+  const _TrainingHeader({
+    required this.colors,
+    required this.completedLetters,
+    required this.onBack,
+  });
 
   final ColorScheme colors;
+  final int completedLetters;
   final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
+    final progress = completedLetters / 26;
+
     return Row(
       children: [
         IconButton(
@@ -300,17 +330,14 @@ class _TrainingHeader extends StatelessWidget {
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: const LinearProgressIndicator(
-                  value: 1 / 26,
-                  minHeight: 8,
-                ),
+                child: LinearProgressIndicator(value: progress, minHeight: 8),
               ),
             ],
           ),
         ),
         const SizedBox(width: 12),
         Text(
-          '1 / 26',
+          '$completedLetters / 26',
           style: Theme.of(context).textTheme.labelLarge
               ?.copyWith(fontWeight: FontWeight.bold),
         ),
@@ -320,8 +347,13 @@ class _TrainingHeader extends StatelessWidget {
 }
 
 class _CharacterPanel extends StatelessWidget {
-  const _CharacterPanel({required this.letterColor, required this.borderColor});
+  const _CharacterPanel({
+    required this.letter,
+    required this.letterColor,
+    required this.borderColor,
+  });
 
+  final String letter;
   final Color letterColor;
   final Color borderColor;
 
@@ -329,7 +361,11 @@ class _CharacterPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _SpeechBubble(letterColor: letterColor, borderColor: borderColor),
+        _SpeechBubble(
+          letter: letter,
+          letterColor: letterColor,
+          borderColor: borderColor,
+        ),
         const SizedBox(height: 4),
         Expanded(
           child: GameWidget.controlled(
@@ -343,8 +379,13 @@ class _CharacterPanel extends StatelessWidget {
 }
 
 class _SpeechBubble extends StatelessWidget {
-  const _SpeechBubble({required this.letterColor, required this.borderColor});
+  const _SpeechBubble({
+    required this.letter,
+    required this.letterColor,
+    required this.borderColor,
+  });
 
+  final String letter;
   final Color letterColor;
   final Color borderColor;
 
@@ -371,7 +412,7 @@ class _SpeechBubble extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'A',
+                letter,
                 style: Theme.of(context).textTheme.headlineMedium
                     ?.copyWith(color: letterColor, fontWeight: FontWeight.w900),
               ),
@@ -387,7 +428,7 @@ class _SpeechBubble extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: Image.asset(
-                  'assets/asl-signs/A.png',
+                  'assets/asl-signs/$letter.png',
                   height: 64,
                   width: 52,
                   fit: BoxFit.contain,
@@ -422,20 +463,26 @@ class _PracticePrompt extends StatelessWidget {
     required this.textColor,
     required this.secondaryTextColor,
     required this.borderColor,
+    required this.letter,
+    required this.trainingComplete,
     required this.cameraEnabled,
     required this.cameraTooltip,
     required this.cameraError,
     required this.onCameraToggle,
+    required this.onSignChecked,
   });
 
   final Color foregroundColor;
   final Color textColor;
   final Color secondaryTextColor;
   final Color borderColor;
+  final String letter;
+  final bool trainingComplete;
   final bool cameraEnabled;
   final String cameraTooltip;
   final String? cameraError;
   final VoidCallback onCameraToggle;
+  final ValueChanged<bool> onSignChecked;
 
   @override
   Widget build(BuildContext context) {
@@ -474,7 +521,9 @@ class _PracticePrompt extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      'Practice the ASL sign for A.',
+                      trainingComplete
+                          ? 'You completed the alphabet!'
+                          : 'Practice the ASL sign for $letter.',
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(color: secondaryTextColor),
                     ),
@@ -484,25 +533,50 @@ class _PracticePrompt extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Tooltip(
-            message: cameraTooltip,
-            child: FilledButton.tonalIcon(
-              onPressed: onCameraToggle,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(58),
+          Row(
+            children: [
+              Expanded(
+                child: Tooltip(
+                  message: cameraTooltip,
+                  child: FilledButton.tonalIcon(
+                    onPressed: onCameraToggle,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(58),
+                    ),
+                    icon: Icon(
+                      cameraEnabled
+                          ? Icons.videocam_rounded
+                          : Icons.videocam_outlined,
+                      size: 24,
+                    ),
+                    label: Text(
+                      cameraEnabled
+                          ? 'Turn camera off'
+                          : 'Practice with camera (optional)',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
               ),
-              icon: Icon(
-                cameraEnabled
-                    ? Icons.videocam_rounded
-                    : Icons.videocam_outlined,
-                size: 30,
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: trainingComplete
+                      ? null
+                      : () => onSignChecked(true),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(58),
+                  ),
+                  icon: Icon(
+                    trainingComplete
+                        ? Icons.check_circle_rounded
+                        : Icons.arrow_forward_rounded,
+                    size: 24,
+                  ),
+                  label: Text(trainingComplete ? 'Completed' : 'Done'),
+                ),
               ),
-              label: Text(
-                cameraEnabled
-                    ? 'Turn camera off'
-                    : 'Practice with camera (optional)',
-              ),
-            ),
+            ],
           ),
           const SizedBox(height: 8),
           if (cameraError != null) ...[
