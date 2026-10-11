@@ -63,6 +63,21 @@ RECORD_SECONDS = 2.8
 TOP_K = 5
 HOLD_FRAMES = 6
 
+# Cadence des videos du dataset : mediane 30.0 fps (58% a 29.97, 11% a 23.98,
+# min 20, max 30.4). L extraction ne reechantillonne pas, elle prend les
+# frames consecutives a la cadence du fichier, donc le modele a appris des
+# signes vus a ~30 images par seconde.
+#
+# La webcam, elle, avance a la vitesse du traitement : ~29 fps quand le GPU
+# est libre, bien moins s il est occupe. Or le modele ne connait pas le temps,
+# seulement le nombre de frames : a 15 fps un signe de 2.8 s arrive en 42
+# frames et se lit comme un signe deux fois plus rapide. L augmentation par
+# time_warp ne couvre que 0.8 a 1.25x, soit 24 a 37 fps.
+#
+# On enregistre donc l HORODATAGE de chaque frame et on ramene la sequence sur
+# une grille a 30 fps avant de classer.
+TARGET_FPS = 30.0
+
 HAND_LINKS = [
     (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
     (0, 9), (9, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15),
@@ -280,7 +295,37 @@ def draw_panel(frame, lines, title=None):
         y += 30
 
 
-def classify(predict, sequence, classes):
+def resample(samples, target_fps=TARGET_FPS):
+    """(horodatage, vecteur) -> sequence a cadence fixe.
+
+    Par PLUS PROCHE VOISIN, jamais par interpolation. L extraction
+    sous-echantillonne les clips longs en choisissant des frames existantes
+    (`wanted[int(i * step)]`), elle n invente aucune position intermediaire ;
+    interpoler ici creerait des coordonnees que le modele n a jamais vues.
+    Mesure a l appui : combler des trous par interpolation lineaire coutait
+    1.4 point (docs/WLASL.md 7.5b).
+
+    Quand la webcam tourne plus lentement que la cible, des frames sont
+    repetees : la trajectoire est saccadee mais sa DUREE est juste, ce qui
+    est le defaut le moins grave des deux.
+    """
+    if len(samples) < 2:
+        return np.array([v for _, v in samples], dtype=np.float32)
+
+    stamps = np.array([t for t, _ in samples], dtype=np.float64)
+    vectors = np.array([v for _, v in samples], dtype=np.float32)
+
+    duration = stamps[-1] - stamps[0]
+    if duration <= 0:
+        return vectors
+
+    grid = np.arange(0.0, duration, 1.0 / target_fps)
+    picked = np.abs(stamps[None, :] - (stamps[0] + grid)[:, None]).argmin(axis=1)
+    return vectors[picked]
+
+
+def classify(predict, samples, classes):
+    sequence = resample(samples)
     padded = pad_sequence(np.array(sequence, dtype=np.float32))
     probabilities = predict(padded)
     order = np.argsort(probabilities)[::-1][:TOP_K]
@@ -333,8 +378,8 @@ def run(camera=0, mode="balanced"):
                 draw_skeleton(frame, shown, width)
 
             if recording:
-                sequence.append(vector)
                 elapsed = time.time() - started_at
+                sequence.append((elapsed, vector))
                 remaining = max(RECORD_SECONDS - elapsed, 0.0)
 
                 filled = int(width * min(elapsed / RECORD_SECONDS, 1.0))
@@ -345,8 +390,18 @@ def run(camera=0, mode="balanced"):
 
                 if elapsed >= RECORD_SECONDS:
                     recording = False
-                    results_top = (classify(predict, sequence, classes)
-                                   if len(sequence) >= 8 else [])
+                    if len(sequence) >= 8:
+                        captured = len(sequence) / max(elapsed, 1e-6)
+                        resampled = len(resample(sequence))
+                        print(f"  {len(sequence)} frames en {elapsed:.2f}s "
+                              f"({captured:.1f} fps) -> {resampled} frames "
+                              f"a {TARGET_FPS:.0f} fps")
+                        if captured < TARGET_FPS * 0.8:
+                            print(f"  ATTENTION : cadence basse, des frames "
+                                  f"sont repetees")
+                        results_top = classify(predict, sequence, classes)
+                    else:
+                        results_top = []
                     sequence = []
 
             if results_top:
@@ -363,8 +418,10 @@ def run(camera=0, mode="balanced"):
                 draw_panel(frame, [(hint, COLOR_OK if person else COLOR_REC, 0.7)])
 
             fps = 1.0 / max(np.mean(times), 1e-6)
-            cv2.putText(frame, f"{fps:4.1f} fps", (width - 110, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_DIM, 1, cv2.LINE_AA)
+            colour = COLOR_OK if fps >= TARGET_FPS * 0.8 else COLOR_REC
+            cv2.putText(frame, f"{fps:4.1f} / {TARGET_FPS:.0f} fps",
+                        (width - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        colour, 1, cv2.LINE_AA)
 
             cv2.imshow("WLASL50 - RTMPose", frame)
 

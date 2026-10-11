@@ -615,6 +615,44 @@ conflict rule — at training time the lower-confidence hand is dropped, while
 
 Running total: 24 experiments, 5 of which gained anything.
 
+### 7.5c Frame rate: the demo needs a fixed time base
+
+The dataset's videos run at a median of **30.0 fps** (58% at 29.97, 11% at
+23.98, min 20, max 30.4) and extraction does not resample — it takes
+consecutive frames at the file's own rate. So the model learned signs seen at
+roughly 30 images per second.
+
+A webcam advances at whatever the pipeline achieves: ~29 fps with a free GPU,
+far less with a busy one. The model has no notion of time, only of frame
+count, so at 15 fps a 2.8 s sign arrives as 42 frames and reads as a sign
+performed twice as fast. `time_warp` augmentation covers only 0.8-1.25x.
+
+Measured by subsampling stored sequences to simulate a slower camera, then
+classifying (training clips, so the 92% ceiling is inflated — the pattern is
+what transfers):
+
+```
+camera rate   uncorrected   resampled to 30 fps
+   30.0 fps       92.2%           91.9%
+   24.0 fps       91.9%           91.9%
+   20.0 fps       91.7%           91.7%
+   15.0 fps       91.2%           91.9%
+   10.0 fps       84.9%           91.4%
+```
+
+**The effect only bites below ~15 fps**, where the uncorrected path loses 7.3
+points and resampling recovers 6.5. At the ~29 fps the demo achieves it was
+never costing anything, and resampling costs 0.3 points there — noise. Cheap
+insurance against a failure we have already seen: sharing the GPU with an
+extraction made the demo crawl.
+
+The demo records each frame's timestamp and resamples onto a 30 fps grid by
+**nearest neighbour**, never interpolation — extraction subsamples long clips
+by picking existing frames (`wanted[int(i * step)]`) and invents no
+intermediate positions, and 7.5b measured that fabricating coordinates costs
+1.4 points. Below the target rate frames are repeated: the trajectory is jerky
+but its duration is right, which is the lesser fault.
+
 ### 7.6 Two metrics, and a reporting error
 
 Every paired t-test in this phase was run on `per_fold`, which holds the
