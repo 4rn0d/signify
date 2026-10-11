@@ -34,6 +34,31 @@ void main() {
     expect(find.byTooltip('Turn camera on'), findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
 
+    await tester.tap(find.text('Done'));
+    await tester.pump();
+    expect(find.text('Practice the ASL sign for B.'), findsOneWidget);
+    expect(find.text('2 / 26'), findsOneWidget);
+    expect(
+      (tester.widget<Image>(find.byType(Image)).image as AssetImage).assetName,
+      'assets/asl-signs/B.png',
+    );
+
+    for (var letter = 0; letter < 24; letter++) {
+      await tester.tap(find.text('Done'));
+      await tester.pump();
+    }
+    expect(find.text('Practice the ASL sign for Z.'), findsOneWidget);
+    expect(find.text('26 / 26'), findsOneWidget);
+    expect(
+      (tester.widget<Image>(find.byType(Image)).image as AssetImage).assetName,
+      'assets/asl-signs/Z.png',
+    );
+
+    await tester.tap(find.text('Done'));
+    await tester.pump();
+    expect(find.text('You completed the alphabet!'), findsOneWidget);
+    expect(find.text('Completed'), findsOneWidget);
+
     debugDefaultTargetPlatformOverride = TargetPlatform.fuchsia;
     addTearDown(() {
       debugDefaultTargetPlatformOverride = null;
