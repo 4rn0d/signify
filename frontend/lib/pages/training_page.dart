@@ -2,11 +2,10 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:camera_macos/camera_macos.dart';
-import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../game/gragas_game.dart';
+import '../widgets/gragas_avatar.dart';
 
 class TrainingPage extends StatefulWidget {
   const TrainingPage({super.key});
@@ -367,12 +366,7 @@ class _CharacterPanel extends StatelessWidget {
           borderColor: borderColor,
         ),
         const SizedBox(height: 4),
-        Expanded(
-          child: GameWidget.controlled(
-            gameFactory: GragasGame.new,
-            backgroundBuilder: (context) => const SizedBox.expand(),
-          ),
-        ),
+        Expanded(child: const GragasAvatar()),
       ],
     );
   }

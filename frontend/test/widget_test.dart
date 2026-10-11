@@ -3,8 +3,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:frontend/main.dart';
+import 'package:frontend/widgets/gragas_avatar.dart';
 
 void main() {
+  testWidgets('GragasAvatar switches between available animations', (
+    WidgetTester tester,
+  ) async {
+    Widget avatar(GragasAnimation animation) => MaterialApp(
+      home: SizedBox(
+        width: 320,
+        height: 320,
+        child: GragasAvatar(animation: animation),
+      ),
+    );
+
+    await tester.pumpWidget(avatar(GragasAnimation.idle));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    for (final animation in GragasAnimation.values.skip(1)) {
+      await tester.pumpWidget(avatar(animation));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('opens on the Signify menu and navigates to training', (
     WidgetTester tester,
   ) async {
