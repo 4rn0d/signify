@@ -89,7 +89,7 @@ POSE_MIRROR_PAIRS = [(1, 2), (3, 4), (5, 6), (7, 8)]
 
 
 def load_sequences(variants="all", features_dir=None, metadata_only=False,
-                   with_confidence=False):
+                   with_confidence=False, with_meta=False):
     """variants : 'all', 'dominant' (variante majoritaire seulement) ou
     'split' (chaque variante devient une classe a part).
 
@@ -110,10 +110,25 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
     for path in sorted(glob.glob(os.path.join(features_dir or FEATURES_DIR, "*.npz"))):
         data = np.load(path, allow_pickle=True)
         video_id = str(data["video_id"])
+        meta = None
         if metadata_only:
             vector = None
         else:
             vector = data["features"].astype(np.float32)
+            if with_meta:
+                for field in ("hand_scores", "hand_inside", "hand_conflict"):
+                    if field not in data.files:
+                        raise ValueError(
+                            f"{os.path.basename(path)} ne contient pas {field}. "
+                            f"Le filtrage a l entrainement demande une extraction "
+                            f"faite avec --raw."
+                        )
+                meta = {
+                    "hand_scores": data["hand_scores"].astype(np.float32),
+                    "hand_inside": data["hand_inside"].astype(np.float32),
+                    "hand_conflict": data["hand_conflict"].astype(bool),
+                }
+
             if with_confidence:
                 if "hand_scores" not in data.files:
                     raise ValueError(
@@ -133,6 +148,7 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
                 "signer_id": int(data["signer_id"]),
                 "video_id": video_id,
                 "variation_id": int(variation.get(video_id, 0)),
+                "meta": meta,
             }
         )
 
@@ -387,6 +403,64 @@ FINGERS = [
 # Indices dans POSE_KEYPOINTS = [nez, epG, epD, coudeG, coudeD,
 #                                poignetG, poignetD, hancheG, hancheD]
 POSE_NOSE = 0
+
+
+def gate_hands(batch, layout, scores, inside, conflict,
+               threshold=0.0, soft=False, inside_threshold=0.0,
+               use_conflict=False):
+    """Decide quelles mains le modele voit, a partir des features brutes.
+
+    L extraction en mode brut n ecarte rien : toutes les coordonnees sont
+    ecrites et les drapeaux valent 1. C est ici que les trois filtres
+    s appliquent, ce qui les rend reglables sans reextraire.
+
+    threshold        confiance minimale pour qu une main compte
+    soft             si vrai, les mains sous le seuil gardent leurs
+                     COORDONNEES mais perdent leur drapeau : le modele sait
+                     que la main est douteuse et dispose quand meme de sa
+                     position, la confiance precisant a quel point. Si faux,
+                     coordonnees ET drapeau sont mis a zero, ce que faisait
+                     l extraction.
+
+                     Garder les deux ne serait pas un filtrage doux mais une
+                     absence de filtrage, le seuil n ayant alors aucun effet.
+    inside_threshold part minimale des points dans l image
+    use_conflict     appliquer l arbitrage des mains inventees
+
+    Le filtrage DUR jette de l information ; le filtrage DOUX la garde et
+    laisse le modele trancher. La section 7.5b a montre que lui donner une
+    information vaut mieux que decider a sa place, donc la question merite
+    d etre posee — elle etait jusqu ici hors de portee.
+    """
+    out = batch.copy()
+    hand_block = layout.hand_block
+
+    for side, (flag_index, start) in enumerate(
+            ((layout.left_flag, 0), (layout.right_flag, hand_block))):
+        reject = np.zeros(out.shape[:2], dtype=bool)
+
+        if threshold > 0.0:
+            reject |= scores[..., side] < threshold
+        if inside_threshold > 0.0:
+            reject |= inside[..., side] < inside_threshold
+        if use_conflict:
+            # Le conflit ne designe pas un cote : on retire celle des deux
+            # qui est la plus loin de SON poignet, ce que resolve a deja
+            # tranche a l extraction. Faute de ce detail ici, on ecarte la
+            # moins sure des deux.
+            weaker = scores[..., side] < scores[..., 1 - side]
+            reject |= conflict & weaker
+
+        if soft:
+            # On garde les coordonnees ; seul le drapeau tombe, pour que le
+            # modele sache que la main est douteuse sans perdre sa position.
+            out[..., flag_index] = np.where(reject, 0.0, out[..., flag_index])
+        else:
+            out[..., start:start + hand_block] = np.where(
+                reject[..., None], 0.0, out[..., start:start + hand_block])
+            out[..., flag_index] = np.where(reject, 0.0, out[..., flag_index])
+
+    return out
 
 
 def interpolate_gaps(batch, layout, max_gap=3):
@@ -765,6 +839,18 @@ def main():
                              "continue, en plus du drapeau binaire. Le modele "
                              "ne peut aujourd hui pas distinguer une main a "
                              "0.71 d une a 0.99.")
+    parser.add_argument("--gate", type=float, default=0.0, metavar="X",
+                        help="seuil de confiance applique A L ENTRAINEMENT, sur "
+                             "des features extraites avec --raw")
+    parser.add_argument("--gate-soft", action="store_true",
+                        help="sous le seuil, garder les coordonnees et ne "
+                             "baisser que le drapeau, au lieu de tout mettre a "
+                             "zero : le modele garde la position et la confiance "
+                             "lui dit de s en defier")
+    parser.add_argument("--gate-inside", type=float, default=0.0, metavar="X",
+                        help="part minimale des points dans l image")
+    parser.add_argument("--gate-conflict", action="store_true",
+                        help="appliquer l arbitrage des mains inventees")
     parser.add_argument("--interpolate", type=int, default=0, metavar="N",
                         help="combler les disparitions de main de N frames ou "
                              "moins par interpolation lineaire")
@@ -793,8 +879,11 @@ def main():
         parser.error("--confidence vient des features RTMPose, --no-z des "
                      "features MediaPipe : les deux ensemble n ont pas de sens")
 
+    gating = (args.gate > 0.0 or args.gate_inside > 0.0 or args.gate_conflict)
+
     records = load_sequences(args.variants, args.features_dir,
-                             with_confidence=args.confidence)
+                             with_confidence=args.confidence,
+                             with_meta=gating)
 
     if args.clips_from:
         reference = load_sequences(args.variants, args.clips_from, metadata_only=True)
@@ -844,6 +933,27 @@ def main():
     # Les deux agissent sur la disposition BRUTE, avant mirror et avant le
     # passage au modele : combler puis lisser une trajectoire n a de sens que
     # sur des coordonnees, pas sur des scalaires derives.
+    if gating:
+        scores = np.stack([pad_sequence(r["meta"]["hand_scores"]) for r in records])
+        inside = np.stack([pad_sequence(r["meta"]["hand_inside"]) for r in records])
+        conflict = np.stack([
+            pad_sequence(r["meta"]["hand_conflict"].astype(np.float32)[:, None])[:, 0]
+            for r in records]).astype(bool)
+
+        before = float((features[..., layout.left_flag] > 0.5).mean()
+                       + (features[..., layout.right_flag] > 0.5).mean()) / 2.0
+        features = gate_hands(features, layout, scores, inside, conflict,
+                              threshold=args.gate, soft=args.gate_soft,
+                              inside_threshold=args.gate_inside,
+                              use_conflict=args.gate_conflict)
+        after = float((features[..., layout.left_flag] > 0.5).mean()
+                      + (features[..., layout.right_flag] > 0.5).mean()) / 2.0
+        print(f"filtrage a l entrainement : seuil {args.gate}"
+              f"{' doux' if args.gate_soft else ' dur'}"
+              f"{f', hors-cadre {args.gate_inside}' if args.gate_inside else ''}"
+              f"{', conflits' if args.gate_conflict else ''}"
+              f"   mains gardees {before:.1%} -> {after:.1%}")
+
     if args.interpolate:
         filled = int((features[..., layout.left_flag] > 0.5).sum()
                      + (features[..., layout.right_flag] > 0.5).sum())
@@ -1042,6 +1152,10 @@ def main():
                 "interpolate": args.interpolate,
                 "smooth": args.smooth,
                 "hand_dropout": args.hand_dropout,
+                "gate": args.gate,
+                "gate_soft": args.gate_soft,
+                "gate_inside": args.gate_inside,
+                "gate_conflict": args.gate_conflict,
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),

@@ -574,7 +574,46 @@ become training-time flags. Each of those previously cost an 80-minute
 re-extraction. Note that `--hand-score 0.0` alone is not sufficient: the
 off-frame filter and the arbitration delete hands irrespective of threshold.
 
-Running total: 22 experiments, 5 of which gained anything.
+### Hard versus soft gating: the rule has a boundary
+
+The raw extraction made one question askable for the first time. Hard gating
+*deletes* a rejected hand's coordinates; soft gating keeps them and drops only
+the presence flag, leaving the model to judge. Section 7.5b's lesson predicted
+soft should win.
+
+```
+filtering at extraction time        0.5892
+hard filtering at training time     0.5858   -0.0034   equivalent
+soft filtering                      0.4915   -0.0976   t -10.48  0/5
+```
+
+**Soft gating is catastrophic** — a larger effect than the threshold fix that
+started this section, in the opposite direction to the prediction.
+
+It leaves 42 unreliable coordinate columns for the model to learn to ignore,
+with ~11 clips per class to learn it from. Hard gating zeroes them, so the
+flag, the zeros and the `Masking` layer agree that nothing is there. The
+derived features are zeroed by the presence flag either way, so soft gating's
+only effect is to inject noise.
+
+So the rule needs a boundary. "Give the model information rather than deciding
+for it" holds when the information is **reliable**. The discriminator is signal
+per added dimension, not who does the deciding:
+
+```
++2 reliable columns (confidence)          +1.6
++42 doubtful columns (kept coordinates)   -9.4
+```
+
+This also settles what the +12.9 threshold gain was: removing bad data,
+entirely. No good data was being discarded alongside it.
+
+Hard gating at training time reproducing extraction-time gating to within 0.34
+points validates the raw pipeline. The residual is a known difference in the
+conflict rule — at training time the lower-confidence hand is dropped, while
+`resolve` drops the one whose name does not match the claimed wrist.
+
+Running total: 24 experiments, 5 of which gained anything.
 
 ### 7.6 Two metrics, and a reporting error
 
