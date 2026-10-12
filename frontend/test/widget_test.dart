@@ -87,23 +87,27 @@ void main() {
     expect(find.text('You completed the alphabet!'), findsOneWidget);
     expect(find.text('Completed'), findsOneWidget);
 
-    debugDefaultTargetPlatformOverride = TargetPlatform.fuchsia;
+    final avatarState = tester.state(find.byType(GragasAvatar));
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() {
       debugDefaultTargetPlatformOverride = null;
     });
     await tester.tap(find.text('Practice with camera (optional)'));
     await tester.pump();
 
+    expect(find.byTooltip('Turn camera off'), findsOneWidget);
     expect(
-      find.text('Camera preview is not supported on this platform.'),
-      findsOneWidget,
+      identical(tester.state(find.byType(GragasAvatar)), avatarState),
+      isTrue,
     );
-    expect(find.text('Can you make this sign?'), findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
 
     tester.view.physicalSize = const Size(1200, 800);
     await tester.pump();
-    expect(find.text('Can you make this sign?'), findsOneWidget);
+    expect(
+      identical(tester.state(find.byType(GragasAvatar)), avatarState),
+      isTrue,
+    );
 
     debugDefaultTargetPlatformOverride = null;
     await tester.tap(find.byTooltip('Back to menu'));

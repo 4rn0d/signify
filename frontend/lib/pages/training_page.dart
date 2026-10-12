@@ -16,6 +16,8 @@ class TrainingPage extends StatefulWidget {
 
 class _TrainingPageState extends State<TrainingPage>
     with WidgetsBindingObserver {
+  final _gragasAvatarKey = GlobalKey();
+
   CameraController? _cameraController;
   CameraMacOSController? _macOSCameraController;
   bool _cameraEnabled = false;
@@ -236,6 +238,7 @@ class _TrainingPageState extends State<TrainingPage>
                               letter: _currentLetter,
                               gragasAnimation: _gragasAnimation,
                               gragasAnimationTrigger: _gragasAnimationTrigger,
+                              gragasAvatarKey: _gragasAvatarKey,
                               letterColor: colors.primary,
                               borderColor: colors.outlineVariant,
                             );
@@ -356,6 +359,7 @@ class _CharacterPanel extends StatelessWidget {
     required this.letter,
     required this.gragasAnimation,
     required this.gragasAnimationTrigger,
+    required this.gragasAvatarKey,
     required this.letterColor,
     required this.borderColor,
   });
@@ -363,6 +367,7 @@ class _CharacterPanel extends StatelessWidget {
   final String letter;
   final GragasAnimation gragasAnimation;
   final int gragasAnimationTrigger;
+  final Key gragasAvatarKey;
   final Color letterColor;
   final Color borderColor;
 
@@ -378,6 +383,7 @@ class _CharacterPanel extends StatelessWidget {
         const SizedBox(height: 4),
         Expanded(
           child: GragasAvatar(
+            key: gragasAvatarKey,
             animation: gragasAnimation,
             animationTrigger: gragasAnimationTrigger,
           ),
