@@ -2,11 +2,10 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:camera_macos/camera_macos.dart';
-import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../game/gragas_game.dart';
+import '../widgets/gragas_avatar.dart';
 
 class TrainingPage extends StatefulWidget {
   const TrainingPage({super.key});
@@ -17,12 +16,16 @@ class TrainingPage extends StatefulWidget {
 
 class _TrainingPageState extends State<TrainingPage>
     with WidgetsBindingObserver {
+  final _gragasAvatarKey = GlobalKey();
+
   CameraController? _cameraController;
   CameraMacOSController? _macOSCameraController;
   bool _cameraEnabled = false;
   bool _cameraLoading = false;
   int _currentLetterIndex = 0;
   bool _trainingComplete = false;
+  GragasAnimation _gragasAnimation = GragasAnimation.idle;
+  int _gragasAnimationTrigger = 0;
   String? _cameraError;
 
   String get _currentLetter => String.fromCharCode(65 + _currentLetterIndex);
@@ -31,6 +34,8 @@ class _TrainingPageState extends State<TrainingPage>
     if (!signCompleted || _trainingComplete) return;
 
     setState(() {
+      _gragasAnimation = GragasAnimation.drinkBarrel;
+      _gragasAnimationTrigger++;
       if (_currentLetterIndex == 25) {
         _trainingComplete = true;
       } else {
@@ -231,6 +236,9 @@ class _TrainingPageState extends State<TrainingPage>
                             final sideBySide = stageConstraints.maxWidth >= 720;
                             final characterPanel = _CharacterPanel(
                               letter: _currentLetter,
+                              gragasAnimation: _gragasAnimation,
+                              gragasAnimationTrigger: _gragasAnimationTrigger,
+                              gragasAvatarKey: _gragasAvatarKey,
                               letterColor: colors.primary,
                               borderColor: colors.outlineVariant,
                             );
@@ -349,11 +357,17 @@ class _TrainingHeader extends StatelessWidget {
 class _CharacterPanel extends StatelessWidget {
   const _CharacterPanel({
     required this.letter,
+    required this.gragasAnimation,
+    required this.gragasAnimationTrigger,
+    required this.gragasAvatarKey,
     required this.letterColor,
     required this.borderColor,
   });
 
   final String letter;
+  final GragasAnimation gragasAnimation;
+  final int gragasAnimationTrigger;
+  final Key gragasAvatarKey;
   final Color letterColor;
   final Color borderColor;
 
@@ -368,9 +382,10 @@ class _CharacterPanel extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Expanded(
-          child: GameWidget.controlled(
-            gameFactory: GragasGame.new,
-            backgroundBuilder: (context) => const SizedBox.expand(),
+          child: GragasAvatar(
+            key: gragasAvatarKey,
+            animation: gragasAnimation,
+            animationTrigger: gragasAnimationTrigger,
           ),
         ),
       ],
