@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'training_page.dart';
+import '../services/auth_service.dart';
+
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -8,7 +10,12 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-
+    actions: [
+      IconButton(
+        icon: const Icon(Icons.logout),
+        onPressed: () => AuthService().signOut(),
+      ),
+    ];
     return Scaffold(
       body: SafeArea(
         child: Center(

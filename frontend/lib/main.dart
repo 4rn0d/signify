@@ -1,8 +1,12 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'pages/home_page.dart';
+import 'auth_gate.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const SignifyApp());
 }
 
@@ -22,7 +26,7 @@ class SignifyApp extends StatelessWidget {
         splashFactory: InkRipple.splashFactory,
         useMaterial3: true,
       ),
-      home: const HomePage(),
+      home: const AuthGate(),
     );
   }
 }
