@@ -939,6 +939,15 @@ def main():
                         help="probabilite d effacer une main sur un intervalle, "
                              "a l entrainement, pour encaisser les pertes de "
                              "detection en direct")
+    parser.add_argument("--max-train-signers", type=int, default=0, metavar="N",
+                        help="limiter l ENTRAINEMENT a N signeurs, les folds de "
+                             "test restant intacts. Mesure ce qu apporte chaque "
+                             "signeur supplementaire, independamment du nombre "
+                             "de clips.")
+    parser.add_argument("--max-per-class", type=int, default=0, metavar="N",
+                        help="plafonner a N clips par glose, pour mesurer la "
+                             "courbe d apprentissage et donc la valeur "
+                             "marginale d un clip supplementaire")
     parser.add_argument("--handshape", action="store_true",
                         help="8 scalaires d opposition du pouce, que le "
                              "repliement ne porte pas")
@@ -991,6 +1000,25 @@ def main():
         missing = sorted(target - set(own))
         print(f"vocabulaire repris de {args.vocab_from}"
               + (f" ; {len(missing)} gloses absentes ici : {missing}" if missing else ""))
+
+    if args.max_per_class:
+        # Tirage aleatoire a graine fixe, et non les N premiers : l ordre des
+        # fichiers suit le video_id, qui correle avec le signeur, donc
+        # tronquer appauvrirait la diversite des signeurs en plus du nombre.
+        picker = np.random.default_rng(0)
+        grouped = collections.defaultdict(list)
+        for record in records:
+            grouped[record["gloss"]].append(record)
+        capped = []
+        for gloss, items in grouped.items():
+            if len(items) <= args.max_per_class:
+                capped.extend(items)
+            else:
+                chosen = picker.choice(len(items), args.max_per_class, replace=False)
+                capped.extend(items[i] for i in chosen)
+        print(f"plafond {args.max_per_class} clips par glose : "
+              f"{len(records)} -> {len(capped)} sequences")
+        records = capped
 
     glosses = sorted({r["gloss"] for r in records})
     index = {g: i for i, g in enumerate(glosses)}
@@ -1122,7 +1150,23 @@ def main():
 
     for fold_index, held in enumerate(folds, start=1):
         test_mask = np.isin(signers, list(held))
-        train_x, train_y = features[~test_mask], labels[~test_mask]
+        train_mask = ~test_mask
+
+        if args.max_train_signers:
+            # On sous-echantillonne les signeurs d ENTRAINEMENT en laissant le
+            # fold de test tel quel : sinon reduire le vivier changerait aussi
+            # la difficulte du test, et l effet mesure serait confondu.
+            pool = sorted({int(x) for x in signers[train_mask]})
+            picker = np.random.default_rng(1000 + fold_index)
+            keep_signers = picker.choice(
+                pool, min(args.max_train_signers, len(pool)), replace=False)
+            narrowed = train_mask & np.isin(signers, keep_signers)
+            print(f"    signeurs d entrainement {len(pool)} -> {len(keep_signers)}, "
+                  f"clips {int(train_mask.sum())} -> {int(narrowed.sum())}", flush=True)
+            train_mask = narrowed
+
+        train_x, train_y = features[train_mask], labels[train_mask]
+
         test_x, test_y = features[test_mask], labels[test_mask]
 
         eval_x = to_model(add_velocity(test_x) if args.velocity else test_x)
@@ -1261,6 +1305,8 @@ def main():
                 "gate_soft": args.gate_soft,
                 "gate_inside": args.gate_inside,
                 "gate_conflict": args.gate_conflict,
+                "max_per_class": args.max_per_class,
+                "max_train_signers": args.max_train_signers,
                 "units": args.units,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),
