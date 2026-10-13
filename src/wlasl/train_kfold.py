@@ -587,6 +587,84 @@ def drop_hand(batch, rng, layout, probability=0.3, max_span=12):
     return out
 
 
+def add_handshape(batch, layout=None, full=False):
+    """Decrit la main autrement que par la flexion des doigts.
+
+    Le repliement des 23 features derivees ne mesure QUE la flexion. Il ne
+    dit rien de la position du pouce par rapport aux autres doigts, de
+    l ecartement, ni de l ouverture globale — or ce sont des parametres de
+    forme de main a part entiere en ASL, et c est ce qui separe les paires
+    que la matrice de confusion a isolees.
+
+    Pouvoir separateur mesure (AUC entre les deux classes d une paire, sur
+    la moyenne par clip) avant d entrainer quoi que ce soit :
+
+                        meilleur curl   meilleur candidat
+      apple / candy          0.84            0.91   pouce-index
+      bird / orange          0.89            0.98   paume-annul
+      bed / mother           0.58            0.87   paume-auric
+      thursday / shirt       0.86            0.99   pouce-auric
+      apple / deaf           0.86            0.96   pouce-index
+
+    bed / mother est le cas net : le repliement y est a 0.58, soit a peine
+    mieux qu une piece lancee en l air.
+
+    Tout est normalise par la largeur de paume, donc invariant a l echelle
+    comme le repliement l est a la rotation.
+
+      4 par main   pouce -> bout de chaque autre doigt (opposition)
+      full ajoute :
+      5 par main   bout -> poignet (main ouverte ou fermee)
+      3 par main   ecart entre bouts adjacents
+      1 par main   etendue des quatre bouts
+    """
+    layout = layout or Layout.from_dim(batch.shape[-1])
+    step = layout.coords
+    hand_block = layout.hand_block
+
+    def point(off, index):
+        start = off + index * step
+        return batch[..., start:start + 2]
+
+    def dist(a, b):
+        return np.linalg.norm(a - b, axis=-1)
+
+    columns = []
+    owners = []          # quelle main possede chaque colonne
+
+    for side, off in enumerate((0, hand_block)):
+        palm = np.maximum(dist(point(off, 5), point(off, 17)), 1e-6)
+
+        # opposition du pouce : la position du pouce face aux autres doigts
+        for tip in (8, 12, 16, 20):
+            columns.append(dist(point(off, 4), point(off, tip)) / palm)
+            owners.append(side)
+
+        if full:
+            for tip in (4, 8, 12, 16, 20):
+                columns.append(dist(point(off, tip), point(off, 0)) / palm)
+                owners.append(side)
+            for a, b in ((8, 12), (12, 16), (16, 20)):
+                columns.append(dist(point(off, a), point(off, b)) / palm)
+                owners.append(side)
+            tips = [point(off, t) for t in (4, 8, 12, 16, 20)]
+            stacked = np.stack(tips, axis=-2)
+            extent = np.linalg.norm(stacked.max(axis=-2) - stacked.min(axis=-2), axis=-1)
+            columns.append(extent / palm)
+            owners.append(side)
+
+    extra = np.stack(columns, axis=-1).astype(np.float32)
+
+    # Une main absente ne doit pas produire de valeurs inventees : ses
+    # colonnes repassent a zero, les drapeaux disant deja qu il n y a rien.
+    present = (batch[..., layout.left_flag] > 0.5,
+               batch[..., layout.right_flag] > 0.5)
+    for index, side in enumerate(owners):
+        extra[..., index] *= present[side]
+
+    return np.concatenate([batch, extra], axis=-1)
+
+
 def add_symmetry(batch, layout=None):
     """Deux scalaires sur le rapport entre les deux mains.
 
@@ -861,6 +939,11 @@ def main():
                         help="probabilite d effacer une main sur un intervalle, "
                              "a l entrainement, pour encaisser les pertes de "
                              "detection en direct")
+    parser.add_argument("--handshape", action="store_true",
+                        help="8 scalaires d opposition du pouce, que le "
+                             "repliement ne porte pas")
+    parser.add_argument("--handshape-full", action="store_true",
+                        help="26 scalaires : opposition, ouverture, ecartement")
     parser.add_argument("--symmetry", action="store_true",
                         help="deux scalaires de symetrie entre les mains")
     parser.add_argument("--vocab-from", default=None,
@@ -982,6 +1065,10 @@ def main():
             pieces.append(add_depth_proxy(batch)[:, :, -4:])
         if args.symmetry:
             pieces.append(add_symmetry(batch, layout)[:, :, -2:])
+        if args.handshape or args.handshape_full:
+            width = 26 if args.handshape_full else 8
+            pieces.append(add_handshape(batch, layout,
+                                        full=args.handshape_full)[:, :, -width:])
 
         if keep_columns is not None:
             batch = batch[:, :, keep_columns]
@@ -994,6 +1081,8 @@ def main():
     base_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
     if args.symmetry:
         base_dim += 2
+    if args.handshape or args.handshape_full:
+        base_dim += 26 if args.handshape_full else 8
     if args.rich:
         base_dim += 23
     elif args.depth_proxy:
@@ -1008,6 +1097,7 @@ def main():
     rng = np.random.default_rng(args.seed)
     scores = []
     histories = []
+    out_of_fold = []
 
     pretrain_x = pretrain_y = None
     if args.pretrain_vocab:
@@ -1106,6 +1196,19 @@ def main():
             summed = sum(c[epoch] for c in curves)
             curve.append(round(float((summed.argmax(axis=1) == test_y).mean()), 4))
 
+        # Predictions HORS FOLD, moyennees sur les 30 dernieres epochs pour
+        # correspondre a la metrique rapportee et non a une epoch unique.
+        # Sans elles, aucune matrice de confusion n est possible : le modele
+        # final a vu toutes les donnees, et l evaluer dessus cacherait
+        # precisement les confusions qu on cherche.
+        window = range(max(args.epochs - 30, 0), args.epochs)
+        tail_probabilities = sum(sum(c[epoch] for c in curves) for epoch in window)
+        tail_probabilities = tail_probabilities / (len(curves) * len(window))
+        out_of_fold.append({
+            "labels": [int(y) for y in test_y],
+            "probabilities": np.round(tail_probabilities, 5).tolist(),
+        })
+
         final = curve[-1]
         scores.append(final)
         histories.append(curve)
@@ -1149,6 +1252,8 @@ def main():
                 "vocab": args.vocab,
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,
+                "handshape": args.handshape,
+                "handshape_full": args.handshape_full,
                 "interpolate": args.interpolate,
                 "smooth": args.smooth,
                 "hand_dropout": args.hand_dropout,
@@ -1170,6 +1275,8 @@ def main():
                 # PAS la metrique de reference, qui est per_fold_plateau.
                 "per_fold": [float(s) for s in scores],
                 "curves": histories,
+                "out_of_fold": out_of_fold,
+                "classes": glosses,
             },
             handle, ensure_ascii=False, indent=1,
         )

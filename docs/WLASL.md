@@ -653,6 +653,77 @@ intermediate positions, and 7.5b measured that fabricating coordinates costs
 1.4 points. Below the target rate frames are repeated: the trajectory is jerky
 but its duration is right, which is the lesser fault.
 
+### 7.5d Confusion matrix, and thumb opposition (+1.1)
+
+Out-of-fold predictions, averaged over the same last-30-epoch window as the
+reported metric, make a confusion matrix possible — the §8 open item. The
+shipped model has seen every clip, so evaluating it on them would hide exactly
+the confusions being looked for.
+
+```
+726 clips out of fold    top-1 61.6%   top-5 91.2%
+
+lowest recall
+  thursday  17%   -> shirt, bowling
+  candy     18%   -> apple x6   (apple -> candy x1 only)
+  eat       18%   -> wrong, color
+  hearing   40%   -> apple x5
+  deaf      35%   -> apple x3
+```
+
+**Every confused pair differs mainly in handshape at the same body location**
+with similar gross motion: `dance`/`study` (hand over palm, different finger
+action), `bird`/`orange` (pinch or squeeze at the mouth), `apple`/`candy`
+(twist at the cheek). `apple` is an attractor, predicted 27 times for 15 real
+clips, absorbing `candy`, `hearing` and `deaf`.
+
+Three findings that narrow the cause:
+
+**No class collapses.** The least-predicted class still gets 7 predictions
+across 726 clips, so nothing is entirely absent.
+
+**Class imbalance is not the cause.** Correlation between clip count and
+recall is +0.116; recall is 57.8% for classes with <=12 clips against 62.5%
+for the rest. Class weighting would not address this.
+
+**Errors are confident, not narrow.** When top-1 is wrong the probability gap
+to the true label is a median 0.433, and only 6% of errors fall under 0.05. So
+the discriminating information is not reaching the model, rather than being
+present and mis-ranked.
+
+Curl measures finger FLEXION only — nothing about thumb position relative to
+the other fingers, which is a primary ASL handshape parameter. Screening
+candidate features by pairwise AUC before training:
+
+```
+                   best curl   best candidate
+apple / candy          0.84         0.91   thumb-index
+bird / orange          0.89         0.98   palm-ring
+bed / mother           0.58         0.87   palm-little
+thursday / shirt       0.86         0.99   thumb-little
+```
+
+Adding 8 thumb-opposition scalars (thumb tip to each other fingertip, per
+hand, normalised by palm width) is worth **+1.1 points, 5/5 folds, t=+4.06**.
+The full 26-scalar version (opposition, openness, spread) returns nothing
+(-0.5, 2/5) — dimensions are not free at ~11 clips per class, the same lesson
+as soft gating.
+
+**But it does not fix the confusions it was designed for.** Per-class recall
+moved only 61.2% -> 61.6%, with 18 classes better and 21 worse, and `candy`
+fell from 18% to 9%. `bed`/`mother`, the pair with the largest AUC gain, did
+improve as predicted (8 confusions -> 3), but `candy`/`apple` stayed at 7.
+
+**Pairwise AUC over-promises.** It measures two classes in isolation, while
+the model works in a 50-way setting where sharpening one boundary displaces
+errors elsewhere. The screen predicted one pair out of six. Keep it as a
+filter for hopeless ideas, not as a predictor of gains.
+
+What remains for `candy` is 11 clips of a sign differing from `apple` by a
+bent versus straight index finger, on ~40 px hands. That is §8's binding
+constraint seen up close, and the ways out are dataset-side: merge the pair,
+or record more clips.
+
 ### 7.6 Two metrics, and a reporting error
 
 Every paired t-test in this phase was run on `per_fold`, which holds the
