@@ -963,6 +963,50 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### The 150 epochs are fine; the 60 pretraining epochs are unexamined
+
+Early stopping was asked about and the measurement says there is nothing to
+stop early from. Mean accuracy per epoch band:
+
+```
+                 0-50    50-80   80-110  110-140  140-150
+proj48full      0.2705   0.5627   0.6202   0.6431   0.6475
+rtm07_everything 0.5773  0.6503   0.6633   0.6658   0.6721
+```
+
+**The last band is the highest in every run.** The curve rises and flattens,
+never turning down, so the per-fold "peak" around epoch 113-127 is plateau
+noise rather than a maximum followed by decay. Combined with §5's reason — a
+validation split would leave ~3 clips per gloss, too noisy to choose a
+stopping epoch, and stopping on the test fold is leakage — the fixed budget
+stands. Snapshot averaging handles the plateau wobble better than choosing a
+point could.
+
+`--pretrain-epochs 60` is a different matter. It has **never been varied in
+any experiment, is not recorded in the k-fold results** ("non enregistre"),
+and is unjustified in these docs. The pretraining loop also runs blind, with
+no evaluation inside it, so there is no curve to inspect after the fact. Unlike
+the 150, which has evidence behind it (80 -> 250 moved +0.003), 60 is a default
+nobody has questioned.
+
+Queued, in rough order of cost:
+
+```
+1  record pretrain_epochs in the k-fold results        one line
+   (same gap as the `seeds: None` found in the model card)
+2  snapshot ensembling, 5 per seed, by position        +2.3 measured
+3  ship with 5 seeds, keep measuring with 3            +1.0 expected
+4  sweep --pretrain-epochs 30 / 60 / 120 at 1 seed     ~1 h, untested
+5  confirm the projection on FRESH fold seeds          ~34 experiments
+   have run against the same 5 folds; something clears
+   t=2.78 by chance at that volume
+```
+
+Guess on record for item 4, so it can be wrong: pretraining *length* should
+matter less than its vocabulary size, since what transfers is generic hand and
+body motion rather than gloss-specific knowledge, and 60 epochs is already
+past where that would be learned.
+
 ---
 
 ## 8. Open items
