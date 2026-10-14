@@ -897,6 +897,74 @@ it is the binding one. Source hand size is the likely reason: ~40 px median in t
 
 ---
 
+## 7.8 Agreed but not yet built: snapshots and more seeds
+
+Two cheap ensembling axes, decided on measurement rather than taste, to be
+applied to the shipped model in `train_final.py` and the demo.
+
+**Snapshot ensembling, worth +2.3 points.** Every run already averages its
+out-of-fold predictions over the last 30 epochs, and that average scores
+better than the reported plateau on **12 of 12 runs**, median +0.0254:
+
+```
+run            plateau   predictions moyennees
+proj48full      0.6462          0.6694
+p_vel           0.6493          0.6763
+tipbase         0.5989          0.6295
+```
+
+Three different numbers must not be confused, and were at first:
+
+```
+derniere epoch     ce que le modele expedie EST        proj48full 0.6390
+plateau 30 epochs  ce qu on rapporte                              0.6462
+predictions moy.   un AUTRE modele, non construit                 0.6694
+```
+
+So the reported figures do **not** understate the shipped model; if anything
+the plateau slightly overstates it, since the artefact we save is the final
+epoch. The 0.6694 is a model we never build — it needs the weights saved at
+several points in the plateau.
+
+Free in *training* (those epochs already happen), not free in storage: ~5
+checkpoints per seed instead of 1. Inference cost is irrelevant here because
+the demo classifies **once per recording**, so 25 forward passes at ~3 ms are
+invisible after a 2.8 s capture.
+
+Snapshots must be chosen **by position, not by score** — evenly spread across
+the plateau. Picking the "best" epochs would be selection on the test fold,
+and in `train_final.py` there is no held-out set at all, so the only
+rankable signal is training accuracy, which would favour the most overfit
+snapshots.
+
+**More seeds, worth about +1 point.** Measured costs and the 1/n variance
+curve:
+
+```
+entrainement final   ~13 min par graine    3 -> 38 min, 5 -> 63, 8 -> 101
+k-fold (mesure)      3 graines ~2 h,  5 graines ~3 h 20
+
+3 -> 5   environ +1.0 point
+3 -> 8   environ +1.6
+3 -> 12  environ +1.9
+```
+
+Returns flatten hard. **5 is the sweet spot**; past 8 it is hours for tenths.
+
+**Measure with 3, ship with 5.** The ensemble gain is variance reduction and
+so expected rather than hoped for, which means shipping with more seeds than
+were measured makes the real model slightly better than the quoted figure — a
+conservative error. The k-fold stays at 3 seeds to keep the measurement at 2 h.
+
+Plan: **5 seeds x 5 snapshots = 25 models** for the shipped model, 63 minutes
+of training, k-fold quoted as the floor. The two axes decorrelate differently
+(random initialisation versus stopping point) so they should stack better than
+doubling either. Caveat: snapshot members are consecutive epochs of one run
+and therefore correlated, so part of the +2.3 may already be captured by the
+3-seed average.
+
+---
+
 ## 8. Open items
 
 **Not tested on a real signer yet, and this is now the binding risk.** Every
