@@ -1034,17 +1034,31 @@ no evaluation inside it, so there is no curve to inspect after the fact. Unlike
 the 150, which has evidence behind it (80 -> 250 moved +0.003), 60 is a default
 nobody has questioned.
 
-Queued, in rough order of cost:
+Queued, by value rather than by cost:
 
 ```
-1  record pretrain_epochs in the k-fold results        one line
+1  REBUILD THE SHIPPED MODEL on the 0.7413 config     +6.5 available now
+   train_final.py needs --project and --handshape-full;
+   the demo reads both from the card already.
+   ~1 h with 5 seeds. The demo currently runs ~0.67.
+
+2  record pretrain_epochs in the k-fold results        one line
    (same gap as the `seeds: None` found in the model card)
-2  snapshot ensembling, 5 per seed, by position        +2.3 measured
+
 3  ship with 5 seeds, keep measuring with 3            +1.0 expected
+
 4  sweep --pretrain-epochs 30 / 60 / 120 at 1 seed     ~1 h, untested
-5  confirm the projection on FRESH fold seeds          ~34 experiments
-   have run against the same 5 folds; something clears
-   t=2.78 by chance at that volume
+
+5  confirm on FRESH fold seeds (`--seed`)              validity, not points
+   ~35 experiments have run against the same 5 folds.
+   A 6.5-point margin is far harder to attribute to
+   chance than 4.7 was, but the check is still owed.
+
+6  snapshot ensembling, 5 per seed, by position        +0.5, was +2.3
+   DOWNGRADED: measured +0.0053 on top of a 3-seed
+   ensemble (§7.5h) against +0.0254 on single-seed runs.
+   The seeds already capture that variance reduction.
+   Still free, no longer the headline.
 ```
 
 Guess on record for item 4, so it can be wrong: pretraining *length* should
@@ -1072,10 +1086,37 @@ answer anywhere in them means the model found real signal.
 experiments confirm the model is not the limit. The ways forward are all
 data-side: a third mirror, recording your own clips, or a smaller vocabulary.
 
-**Recording your own clips** is the highest-value next step for a demo that
-works on *you* — the capture window and feature extraction already exist, so
-10 takes each of 10 signs would give more examples of you than the dataset
-has of anyone.
+**Recording your own clips is ready to start.** `docs/RECORDING.md` is the
+brief and `make_reference.py` produces two reference clips per sign of the
+variant the model actually learned — which matters because 9 of the 50 words
+have two variants in the data and `candy` uses variant 1, so a signer doing the
+version they know would record what the model treats as a different class.
 
-**No confusion matrix.** Knowing which signs collide would guide vocabulary
-choices; WLASL has regional variants that may genuinely overlap.
+Protocol: 4 signers, 6 takes for the 22 words the confusion matrix flagged and
+3 for the rest, 216 takes per signer (~54 min), 864 clips. Vary **distance,
+angle and speed** — not the room: the features are shoulder-normalised joint
+coordinates, so the image never reaches the model and environment only
+perturbs the detector upstream. Distance matters most, since hand size in
+pixels is the measured bottleneck on the finger distinctions those pairs need
+(~40 px in the dataset against ~200 px on a close webcam).
+
+Record the signer ID. It is what makes leave-one-signer-out possible, and that
+is the only way to get an honest number for "does this work on a new person at
+our setup" — which 0.7413 does not answer, since it measures held-out WLASL
+signers.
+
+One measured caveat: at 7 clips per class accuracy is 0.3014 against 0.5998 at
+~14.5, so halving the data halves the accuracy. Doubling it is worth far more
+than any feature work in this document — but 864 clips from 4 signers would be
+58% of the training set from four people, so expect the demo to improve on your
+signers while the WLASL benchmark may not move.
+
+**The confusion matrix exists** (§7.5d). Every badly confused pair differs
+mainly in handshape at the same body location — `apple`/`candy`,
+`bird`/`orange`, `dance`/`study`, `bed`/`mother` — and `apple` is an attractor,
+predicted 27 times for 15 real clips. No class collapses entirely, and class
+imbalance is not the cause (clip-count/recall correlation +0.116). What remains
+is that errors are *confident* rather than narrow: when top-1 is wrong, the gap
+to the true label is a median 0.433. The discriminating information is not
+reaching the model, which is why thumb opposition helped the average (+1.1) but
+did not repair the pairs it targeted.
