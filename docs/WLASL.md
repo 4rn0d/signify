@@ -1120,6 +1120,50 @@ So the cumulative run costs its full price: ~15 h at 5 seeds, ~9 h at 3. The
 `--shared-pretrain` flag stays in the harness; if the budget ever binds, the
 test to finish is this one, and only fold 5 is missing.
 
+### A train/serve divergence found while wiring the shipped model
+
+`train_final.py` and the demo were both built for `features_rtm07`, where the
+extractor applies the 0.7 threshold, the off-frame filter and the wrist-claim
+arbitration at extraction time. The measured 0.7413 configuration uses
+`features_rtm_all`, which is extracted in **raw mode**: both hands are always
+written, flags at 1, and `gate_hands()` decides afterwards. That makes the
+gate parameters part of the *definition of the model's input*, not a setting
+of the extractor.
+
+Left alone, the demo would have filtered with the extractor's rule while the
+model had been trained on `gate_hands`' rule. The two agree on the threshold
+and the off-frame test and **disagree on conflicts**: the extractor drops the
+hand that loses the wrist claim, `gate_hands` drops the one with the lower
+confidence. Same intent, different hand on some frames.
+
+Measured on 300 clips: conflicts are **0.27% of dataset frames** — but 5.48%
+on a close-range webcam (§7.3). So the disagreement would have been invisible
+in every number in this document and present in every demo session. That is
+the shape of the bug that took the alphabet phase from 0.985 to 0.384.
+
+The demo now builds model input through the *same* `gate_hands` call, with the
+parameters read from the model card. Verified bit-exact: per-frame gating
+before padding against batched gating after padding, 300 clips, 21739 frames,
+59 of them conflicts, **maximum difference 0.00e+00**.
+
+Two details that look like noise and are not:
+
+- the card carries `extraction_threshold` separately from `gate`. The conflict
+  flag stored in the npz files was computed at the *extraction* threshold, so
+  the demo must replay conflicts at that value, not at the gate's. Both are
+  0.7 today, which is exactly why they needed separating — nothing would have
+  reported them drifting apart.
+- the demo reads `last_inside`/`last_conflict` with the same `getattr`
+  defaults the extraction loop uses. `frame_features` returns early when the
+  shoulders are missing, before setting them, so the features directory
+  carries that same approximation. The vector is all zeros in that case, so
+  it changes nothing — but the path stays identical rather than merely
+  equivalent.
+
+The display still follows what the model sees: presence flags are read from
+the *gated* vector, so a hand dropped by threshold, framing or arbitration
+does not appear on screen.
+
 ### The 150 epochs are fine; the 60 pretraining epochs are unexamined
 
 Early stopping was asked about and the measurement says there is nothing to
@@ -1162,10 +1206,17 @@ Queued, by value rather than by cost:
    NOT the ~10/~6 quoted before measuring, which
    predated tripling the scaffold. Command below.
 
-2  REBUILD THE SHIPPED MODEL on whatever 1 produces    +6.5 available now
-   train_final.py needs --project and --handshape-full;
-   the demo reads both from the card already.
-   ~1 h with 5 seeds. The demo currently runs ~0.67.
+2  REBUILD THE SHIPPED MODEL                           +6.5 available now
+   READY TO RUN -- prep done. train_final.py now takes
+   --project, --handshape-full, --gate*, --vocab-from,
+   --pretrain-variants and --snapshots; the demo
+   replays gate_hands from the card and loads all 25
+   models. Dry-run clean, 733 clips, 155 dims,
+   filtering 80.9% -> 43.2%, scaffold 3428.
+   ~3 h 10 at 5 seeds. The demo still runs ~0.67.
+   Does NOT depend on item 1: the card cites 0.7413
+   with the caveat that 300 glosses, 120 epochs and
+   5 seeds were never measured together.
 
 3  confirm --pretrain-vocab 300 on all five folds      +3.3 on ONE fold
    Fold 1 only, and fold 1 is the easiest. A 5-fold
@@ -1209,6 +1260,18 @@ deliberately absent, which is what returns those 7 clips. `--seeds 3` measures;
 the shipped model uses 5 (item 4). Pair the result against
 `models/wlasl_kfold_proj_everything.json`'s `per_fold_plateau`, never against
 `per_fold` — §7.6 is the record of getting that wrong.
+
+Item 2 as a command -- every default already matches the measured config,
+so the bare call is the right one:
+
+```
+python src/wlasl/train_final.py
+```
+
+It writes 25 models (5 seeds x 5 snapshots at epochs 121, 128, 136, 143, 150)
+plus `models/wlasl_gru_rtmpose.meta.json`. The previous shipped model is kept
+at `models/archive/before_best/`, because `*.keras` is gitignored and
+overwriting it would be permanent -- which has happened once.
 
 Guess on record for item 3, so it can be wrong: pretraining *breadth*
 should matter more than its length, since what transfers is generic hand

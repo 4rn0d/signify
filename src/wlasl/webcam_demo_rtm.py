@@ -43,6 +43,7 @@ enable_cuda_dlls()
 
 import tensorflow as tf
 
+import extract_rtmpose
 from extract_rtmpose import (
     FEATURE_DIM,
     LEFT_HAND,
@@ -54,7 +55,7 @@ from extract_rtmpose import (
     hand_confidences,
 )
 from train_kfold import (MAX_LEN, Layout, add_handshape, add_rich_features,
-                         mirror, pad_sequence)
+                         gate_hands, mirror, pad_sequence)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -134,12 +135,15 @@ def load_model():
     rich = meta.get("rich", False)
     confidence = meta.get("confidence", False)
     handshape = meta.get("handshape", False)
+    handshape_full = meta.get("handshape_full", False)
+    width = 26 if handshape_full else 8
 
     tail = 2 if confidence else 0
     layout = Layout.from_dim(FEATURE_DIM)
     layout.tail = tail
 
-    expected = FEATURE_DIM + tail + (23 if rich else 0) + (8 if handshape else 0)
+    expected = (FEATURE_DIM + tail + (23 if rich else 0)
+                + (width if handshape else 0))
     if expected != meta["feature_dim"]:
         raise SystemExit(
             f"La fiche annonce {meta['feature_dim']} dimensions, ce code en "
@@ -168,7 +172,8 @@ def load_model():
         if rich:
             pieces.append(add_rich_features(batch, layout)[:, :, -23:])
         if handshape:
-            pieces.append(add_handshape(batch, layout)[:, :, -8:])
+            pieces.append(add_handshape(batch, layout,
+                                        full=handshape_full)[:, :, -width:])
         if pieces:
             batch = np.concatenate([batch] + pieces, axis=-1)
 
@@ -190,18 +195,39 @@ def load_model():
 
 
 class Source:
-    """Produit les features, exactement comme l extraction.
+    """Produit les features, exactement comme l entrainement.
+
+    "Comme l entrainement" et non "comme l extraction" : le dossier de
+    features a ete extrait en mode BRUT, et c est gate_hands() qui a ensuite
+    decide quelles mains le modele voyait. Reproduire le filtrage interne de
+    l extracteur donnerait une autre entree sur les frames en conflit, ou sa
+    regle differe (revendication du poignet contre confiance la plus faible).
 
     Le squelette rendu pour l affichage est en PIXELS et dans le repere de
     l image non retournee ; c est l appelant qui le retourne.
     """
 
-    def __init__(self, mode="balanced", with_confidence=True):
+    def __init__(self, mode="balanced", with_confidence=True, layout=None,
+                 gate=None):
         from rtmlib import Wholebody
 
         self.model = Wholebody(mode=mode, backend="onnxruntime", device="cuda")
         self.with_confidence = with_confidence
         self.provider = self.model.pose_model.session.get_providers()[0]
+        self.layout = layout
+        self.gate = gate or {}
+
+        if self.gate.get("raw_features"):
+            # L extracteur ecrit les deux mains sans rien ecarter, comme lors
+            # de la constitution du dossier de features.
+            extract_rtmpose.RAW_MODE = True
+            # Le drapeau de conflit a ete calcule, a l extraction, avec CE
+            # seuil et non avec celui du filtrage : les deux valent 0.7
+            # aujourd hui, ce qui est exactement pourquoi il faut les
+            # distinguer — rien ne signalerait leur divergence.
+            threshold = self.gate.get("extraction_threshold")
+            if threshold is not None:
+                extract_rtmpose.HAND_SCORE_THRESHOLD = float(threshold)
 
     def process(self, frame):
         height, width = frame.shape[:2]
@@ -216,13 +242,36 @@ class Source:
         confidence = np.asarray(scores)[0]
 
         vector, found = frame_features(points, confidence, width, height)
+        hand_score = np.asarray(hand_confidences(confidence), dtype=np.float32)
         if self.with_confidence:
-            vector = np.concatenate(
-                [vector, np.asarray(hand_confidences(confidence), dtype=np.float32)])
+            vector = np.concatenate([vector, hand_score])
+
+        if self.gate.get("raw_features"):
+            # MEME fonction, MEMES parametres qu a l entrainement. Le
+            # filtrage est par frame des deux cotes : le k-fold l applique a
+            # un tableau deja rembourre, dont les frames de remplissage ont
+            # une confiance nulle et sont donc ecartees de la meme facon.
+            vector = gate_hands(
+                vector[None, None, :], self.layout,
+                hand_score[None, None, :],
+                # getattr avec les MEMES valeurs par defaut que la boucle
+                # d extraction : frame_features sort avant de les poser quand
+                # les epaules manquent, et le dossier de features porte donc
+                # la meme approximation. Sans effet sur le vecteur, nul dans
+                # ce cas, mais le chemin reste identique.
+                np.asarray(getattr(frame_features, "last_inside", (0.0, 0.0)),
+                           dtype=np.float32)[None, None, :],
+                np.array([[getattr(frame_features, "last_conflict", False)]],
+                         dtype=bool),
+                threshold=self.gate.get("gate", 0.0),
+                soft=self.gate.get("gate_soft", False),
+                inside_threshold=self.gate.get("gate_inside", 0.0),
+                use_conflict=self.gate.get("gate_conflict", False),
+            )[0, 0]
 
         # Ce qui est DESSINE suit ce que le modele voit : les drapeaux de
-        # presence sont lus dans le vecteur, donc une main ecartee par le
-        # seuil, le hors-cadre ou l arbitrage n apparait pas a l ecran.
+        # presence sont lus dans le vecteur FILTRE, donc une main ecartee par
+        # le seuil, le hors-cadre ou l arbitrage n apparait pas a l ecran.
         flags = vector[FEATURE_DIM - len(POSE_KEYPOINTS) * 2 - 2:
                        FEATURE_DIM - len(POSE_KEYPOINTS) * 2]
         drawable = {
@@ -346,7 +395,11 @@ def run(camera=0, mode="balanced"):
     classes = meta["classes"]
     expected = meta.get("expected_accuracy") or {}
 
-    source = Source(mode=mode, with_confidence=confidence)
+    source = Source(mode=mode, with_confidence=confidence, layout=layout,
+                    gate={key: meta.get(key) for key in
+                          ("raw_features", "gate", "gate_inside",
+                           "gate_conflict", "gate_soft",
+                           "extraction_threshold")})
     print(f"RTMPose {mode} | {source.provider}")
     if source.provider != "CUDAExecutionProvider":
         print("  ATTENTION : CPU, environ 20x plus lent")
