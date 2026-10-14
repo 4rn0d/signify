@@ -724,6 +724,124 @@ bent versus straight index finger, on ~40 px hands. That is §8's binding
 constraint seen up close, and the ways out are dataset-side: merge the pair,
 or record more clips.
 
+### 7.5e Parameter economy: the axis nobody had tested
+
+Asked what limits the number of inputs, the answer turned out to be arithmetic
+rather than opinion. A dimension entering a bidirectional GRU directly costs
+`3 gates x units x 2 directions` parameters — **576 at 96 units** — against
+**580 training clips per fold**. So each added feature is roughly one new
+parameter per training example, which is why small additions pay and large
+ones drown:
+
+```
++2  columns (per-hand confidence)        ~1 200 params   +1.6
++8  columns (thumb opposition)           ~4 600          +1.1
++10 columns (fingertip confidence)       ~5 800          -2.3
++26 columns (full handshape)            ~15 000         -0.5
++42 columns (kept coordinates)          ~24 000         -9.4
+```
+
+**It is not insufficient capacity.** 96 -> 160 units scored worse (0.3579),
+and 96 -> 48 units also scored worse (-0.0452, t=-4.48, 0/5). Bracketed on
+both sides, 96 is near-optimal, and a model that degrades when grown is
+data-limited rather than capacity-limited.
+
+But the 576 figure is an artifact of feeding features straight into the GRU,
+not a law. A linear projection before it changes the economics:
+
+```
+                                     params    per dim
+96 units, no projection              333 554       576
+96 units + projection to 48          288 914        48    12x cheaper
+```
+
+The model gets *smaller* while each feature gets ~12x cheaper. Measured
+against the same features and gating:
+
+```
+projection 48                        0.6288   +0.0299  t +2.10  4/5
+projection 48 + full handshape (26)  0.6462   +0.0472  t +2.42  4/5
+```
+
+**0.6462 is the best bare configuration in the project** — no ensemble, no
+pretraining, no smoothing, no TTA — and 2.1 points below the full-stack
+0.6675 that needs three seeds to reach. Neither clears t=2.78, so both are
+suggestive rather than established, and confirmation on fresh fold seeds is
+owed before either is treated as real.
+
+Note what this does to a standing conclusion. "Every model-side change was
+neutral or harmful" came from sixteen experiments that all made the model
+BIGGER or DIFFERENT — never cheaper per input. The conclusion was drawn from a
+biased sample of the space.
+
+### 7.5f Re-testing the failures once they became affordable
+
+If features failed because they were unaffordable, making them 12x cheaper
+should rescue them. Tested against the 0.6462 base:
+
+```
+feature               before     after       t      verdict
+soft gating          -0.0942   -0.0769   -2.38   still harmful
+fingertip confidence -0.0233   -0.0010   -0.06   neutral
+velocity             -0.0139   +0.0031   +0.36   neutral
+symmetry (control)   -0.0139     ~-0.02           still negative
+```
+
+**The hypothesis was right for one of four.** Only fingertip confidence failed
+because of cost: the projection moved it from significantly harmful to exactly
+zero, which separates two facts the original -2.3 had conflated — the columns
+were expensive AND the information is worthless. Cheapening removed the harm
+and revealed no benefit.
+
+**Soft gating is misleading, not expensive.** 12x cheaper recovered 1.7 of the
+9.4 points it costs. A rejected hand's coordinates are a confident-looking
+guess and the model trusts them; hard zeros are honest.
+
+**Velocity is redundant at any price.** 106 columns, 12x cheaper, still zero.
+This is the cleanest confirmation that the re-derivation rule is about
+*information* rather than cost: a bidirectional GRU can already difference its
+own input, so handing it the differences adds nothing however little they cost.
+
+**Symmetry served as the negative control** and earned its place: had it
+improved under projection, the gains would have been an artifact of the setup
+rather than of affordability. It went negative in two folds and was stopped
+there, which is all a control needs to deliver.
+
+A latent bug surfaced here. `feature_dim` multiplied the *total* by two for
+`--velocity`, but `add_velocity` runs before `to_model`, so only the raw
+columns double. It announced 310 columns for 261 real ones and died on the
+first batch. Wrong since velocity was written, and never hit because
+`--velocity` had never been combined with `--rich` — the original velocity
+test predates the derived features.
+
+### 7.5g Occlusion is visible in the confidences
+
+Fingers hidden behind the palm cannot be measured in 2D, and RTMPose does not
+report that — it emits 21 points regardless, inferring the hidden ones. But it
+does know it is guessing:
+
+```
+palm width / hand length        mean fingertip confidence
+[0.00, 0.35]  edge-on                   0.448
+[0.63, 0.81]  face-on                   0.788
+```
+
+Confidence collapses by 43% when the hand turns edge-on. Fingertips are also
+the least confident points overall (0.655 against 0.687 for the whole hand).
+
+A methodological catch worth keeping: the linear correlation is **-0.016**,
+essentially zero, because the relationship is an inverted U. A correlation
+coefficient cannot see it; banding revealed what the correlation hid.
+
+Exploiting it as 10 fingertip-confidence columns does not work (above). What
+genuinely resolves occlusion is a second camera or a depth sensor. RTMW3D does
+not, as §7.4 measures: monocular depth for a hidden part is also inference.
+The existing mitigation is temporal — a sign is a motion, the hand rotates
+through it, and the bidirectional GRU sees the frames where the fingers were
+visible.
+
+Running total: 34 experiments, 7 of which gained anything.
+
 ### 7.6 Two metrics, and a reporting error
 
 Every paired t-test in this phase was run on `per_fold`, which holds the

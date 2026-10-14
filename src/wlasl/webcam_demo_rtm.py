@@ -53,7 +53,8 @@ from extract_rtmpose import (
     frame_features,
     hand_confidences,
 )
-from train_kfold import MAX_LEN, Layout, add_rich_features, mirror, pad_sequence
+from train_kfold import (MAX_LEN, Layout, add_handshape, add_rich_features,
+                         mirror, pad_sequence)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,12 +133,13 @@ def load_model():
     models = [tf.keras.models.load_model(p) for p in paths]
     rich = meta.get("rich", False)
     confidence = meta.get("confidence", False)
+    handshape = meta.get("handshape", False)
 
     tail = 2 if confidence else 0
     layout = Layout.from_dim(FEATURE_DIM)
     layout.tail = tail
 
-    expected = FEATURE_DIM + tail + (23 if rich else 0)
+    expected = FEATURE_DIM + tail + (23 if rich else 0) + (8 if handshape else 0)
     if expected != meta["feature_dim"]:
         raise SystemExit(
             f"La fiche annonce {meta['feature_dim']} dimensions, ce code en "
@@ -159,9 +161,16 @@ def load_model():
         """padded : (MAX_LEN, 104 + queue), disposition brute."""
         batch = np.stack([padded, mirror(padded[None, ...], layout)[0]])
 
+        # MEME ORDRE qu a l entrainement : rich puis handshape. La
+        # verification de dimension ci-dessus n attraperait pas une
+        # inversion, seulement un total faux.
+        pieces = []
         if rich:
-            extra = add_rich_features(batch, layout)[:, :, -23:]
-            batch = np.concatenate([batch, extra], axis=-1)
+            pieces.append(add_rich_features(batch, layout)[:, :, -23:])
+        if handshape:
+            pieces.append(add_handshape(batch, layout)[:, :, -8:])
+        if pieces:
+            batch = np.concatenate([batch] + pieces, axis=-1)
 
         tensor = tf.constant(batch, dtype=tf.float32)
 

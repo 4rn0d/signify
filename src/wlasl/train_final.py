@@ -41,6 +41,7 @@ import tensorflow as tf
 from train_kfold import (
     MAX_LEN,
     Layout,
+    add_handshape,
     add_rich_features,
     augment_batch,
     build_model,
@@ -54,7 +55,17 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 META_PATH = os.path.join(MODELS_DIR, "wlasl_gru.meta.json")
+# La configuration exacte de ce script — pile complete ET opposition du pouce
+# — n a jamais ete mesuree en k-fold. On cite donc la mesure la PLUS PROCHE,
+# la pile complete sans l opposition, et on dit dans la fiche ce qui manque.
+# Citer wlasl_kfold_shape8 (0.5998) serait pire : c est l opposition SANS la
+# pile, donc une sous-estimation d environ 8 points.
 KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_rtm07_everything.json")
+KFOLD_CAVEAT = (
+    "mesure sur la pile complete SANS l opposition du pouce. Celle-ci valait "
+    "+0.0106 (5/5 folds, t=+4.06) mesuree separement sans la pile, donc "
+    "attendre environ 0.68 — la combinaison des deux n a pas ete mesuree."
+)
 
 
 def model_path(seed_index, extractor="rtmpose"):
@@ -74,7 +85,7 @@ def meta_path(extractor="rtmpose"):
 
 
 def train_one(seed, features, labels, num_classes, args, pretrain=None,
-              keep_columns=None, rich=False, layout=None):
+              keep_columns=None, rich=False, layout=None, handshape=False):
     """features arrive en 155 colonnes.
 
     Le retrait de la profondeur se fait JUSTE avant le modele : mirror(),
@@ -90,18 +101,26 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
         # Les features derivees se calculent sur la disposition COMPLETE
         # (indices des mains et de la pose codes en dur), donc avant la
         # selection de colonnes.
-        extra = add_rich_features(batch, layout)[:, :, -23:] if rich else None
+        # MEME ORDRE que train_kfold.to_model : d abord les 23 scalaires
+        # derives, ensuite les 8 d opposition du pouce. Un ordre different
+        # donnerait au modele les bonnes valeurs dans les mauvaises colonnes.
+        pieces = []
+        if rich:
+            pieces.append(add_rich_features(batch, layout)[:, :, -23:])
+        if handshape:
+            pieces.append(add_handshape(batch, layout)[:, :, -8:])
 
         if keep_columns is not None:
             batch = batch[:, :, keep_columns]
 
-        if extra is not None:
-            batch = np.concatenate([batch, extra], axis=-1)
+        if pieces:
+            batch = np.concatenate([batch] + pieces, axis=-1)
 
         return batch
 
-    feature_dim = (len(keep_columns) if keep_columns is not None
-                   else features.shape[2]) + (23 if rich else 0)
+    feature_dim = ((len(keep_columns) if keep_columns is not None
+                    else features.shape[2])
+                   + (23 if rich else 0) + (8 if handshape else 0))
 
     model = build_model(num_classes, args.units, feature_dim,
                         "gru", args.label_smoothing)
@@ -153,6 +172,9 @@ def main():
                         default=os.path.join(PROJECT_ROOT, "data", "wlasl",
                                              "features_rtm07"),
                         help="dossier de features ; par defaut RTMPose a 0.7")
+    parser.add_argument("--handshape", action="store_true", default=True,
+                        help="8 scalaires d opposition du pouce (+1.1 points, "
+                             "5/5 folds)")
     parser.add_argument("--confidence", action="store_true", default=True,
                         help="confiance de chaque main en valeur continue")
     parser.add_argument("--no-z", action="store_true", default=False,
@@ -179,8 +201,9 @@ def main():
     labels = np.array([index[r["gloss"]] for r in selected], dtype=np.int32)
 
     keep_columns = drop_z_indices(features.shape[2]) if args.no_z else None
-    feature_dim = (len(keep_columns) if keep_columns is not None
-                   else features.shape[2]) + (23 if args.rich else 0)
+    feature_dim = ((len(keep_columns) if keep_columns is not None
+                    else features.shape[2])
+                   + (23 if args.rich else 0) + (8 if args.handshape else 0))
 
     # La disposition ne peut pas etre devinee quand il y a une queue : 106
     # colonnes se lisent aussi bien comme 9 points de pose plus 2 confiances
@@ -218,7 +241,7 @@ def main():
         print(f"  modele {seed_index + 1}/{args.seeds}")
         model = train_one(args.seed + seed_index * 100, features, labels,
                           len(glosses), args, pretrain, keep_columns,
-                          args.rich, layout)
+                          args.rich, layout, args.handshape)
         path = model_path(seed_index, extractor)
         model.save(path)
         saved.append(os.path.relpath(path, PROJECT_ROOT))
@@ -234,6 +257,8 @@ def main():
             "std": round(float(plateau.std()), 4),
             "folds": kfold["folds"],
             "chance": round(1 / len(glosses), 4),
+            "measured_config": os.path.basename(KFOLD_PATH),
+            "caveat": KFOLD_CAVEAT if args.handshape else None,
         }
 
     metadata = {
@@ -249,9 +274,12 @@ def main():
         "drop_z": bool(args.no_z),
         "rich": bool(args.rich),
         "confidence": bool(args.confidence),
+        "handshape": bool(args.handshape),
         "features_dir": os.path.relpath(args.features_dir, PROJECT_ROOT),
         "extractor": extractor,
         "keep_columns": keep_columns.tolist() if keep_columns is not None else None,
+        "seeds": args.seeds,
+        "pretrain_epochs": args.pretrain_epochs,
         "units": args.units,
         "epochs": args.epochs,
         "label_smoothing": args.label_smoothing,

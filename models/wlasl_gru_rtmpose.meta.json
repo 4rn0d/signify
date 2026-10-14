@@ -1,5 +1,5 @@
 {
- "created": "2026-10-10T21:43:59-04:00",
+ "created": "2026-10-13T16:52:21-04:00",
  "model": "ensemble de GRU bidirectionnels 2 couches sur sequences de landmarks",
  "models": [
   "models\\wlasl_gru_rtmpose_s0.keras",
@@ -113,10 +113,11 @@
   "yes": 18
  },
  "max_len": 80,
- "feature_dim": 129,
+ "feature_dim": 137,
  "drop_z": false,
  "rich": true,
  "confidence": true,
+ "handshape": true,
  "features_dir": "data\\wlasl\\features_rtm07",
  "extractor": "rtmpose",
  "keep_columns": null,
@@ -129,7 +130,10 @@
   "mean": 0.6675,
   "std": 0.0507,
   "folds": 5,
-  "chance": 0.02
+  "chance": 0.02,
+  "measured_config": "wlasl_kfold_rtm07_everything.json",
+  "caveat": "mesure sur la pile complete SANS l opposition du pouce. Celle-ci valait +0.0106 (5/5 folds, t=+4.06) mesuree separement sans la pile, donc attendre environ 0.68 — la combinaison exacte de ce modele n a pas ete mesuree."
  },
- "accuracy_note": "expected_accuracy vient de la validation croisee par signeur (train_kfold.py, configuration identique), pas de ce modele : celui-ci est entraine sur toutes les donnees et n'a pas d'ensemble de test propre."
+ "accuracy_note": "expected_accuracy vient de la validation croisee par signeur (train_kfold.py, configuration identique), pas de ce modele : celui-ci est entraine sur toutes les donnees et n'a pas d'ensemble de test propre.",
+ "seeds": 3
 }

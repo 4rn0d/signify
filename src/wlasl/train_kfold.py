@@ -48,6 +48,14 @@ class Layout:
     lever d erreur, en degradant simplement le resultat.
     """
 
+    # Groupes de colonnes de queue a echanger au miroir, en decalage depuis
+    # le DEBUT de la queue : (gauche, droite, largeur). Une colonne de queue
+    # qui n y figure pas ne suivrait pas sa main quand l image est retournee.
+    TAIL_GROUPS = {
+        2: [(0, 1, 1)],                      # confiance par main
+        12: [(0, 1, 1), (2, 7, 5)],          # + 5 bouts de doigts par main
+    }
+
     def __init__(self, coords, tail=0):
         self.coords = coords
         self.tail = tail                  # colonnes ajoutees en fin de vecteur
@@ -89,7 +97,7 @@ POSE_MIRROR_PAIRS = [(1, 2), (3, 4), (5, 6), (7, 8)]
 
 
 def load_sequences(variants="all", features_dir=None, metadata_only=False,
-                   with_confidence=False, with_meta=False):
+                   with_confidence=False, with_meta=False, with_tips=False):
     """variants : 'all', 'dominant' (variante majoritaire seulement) ou
     'split' (chaque variante devient une classe a part).
 
@@ -115,6 +123,19 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
             vector = None
         else:
             vector = data["features"].astype(np.float32)
+            if with_tips:
+                if "hand_point_scores" not in data.files:
+                    raise ValueError(
+                        f"{os.path.basename(path)} ne contient pas "
+                        f"hand_point_scores. --tip-confidence demande une "
+                        f"extraction faite avec --raw."
+                    )
+                tips = data["hand_point_scores"].astype(np.float32)
+                # 21 points par main, bouts aux indices 4, 8, 12, 16, 20
+                picked = [t + offset for offset in (0, HAND_POINTS)
+                          for t in (4, 8, 12, 16, 20)]
+                vector = np.concatenate([vector, tips[:, picked]], axis=1)
+
             if with_meta:
                 for field in ("hand_scores", "hand_inside", "hand_conflict"):
                     if field not in data.files:
@@ -230,13 +251,23 @@ def mirror(batch, layout=None):
         out[..., ia:ia + step] = out[..., ib:ib + step]
         out[..., ib:ib + step] = tmp
 
-    # Les colonnes de queue sont les confiances (gauche, droite) : elles
-    # suivent leur main. Les oublier donnerait au modele la confiance de la
-    # main droite en face des points de la gauche.
-    if layout.tail == 2:
-        swap = out[..., -2].copy()
-        out[..., -2] = out[..., -1]
-        out[..., -1] = swap
+    # Les colonnes de queue suivent leur main. Les oublier donnerait au modele
+    # la confiance de la main droite en face des points de la gauche.
+    if layout.tail:
+        groups = Layout.TAIL_GROUPS.get(layout.tail)
+        if groups is None:
+            raise ValueError(
+                f"queue de {layout.tail} colonnes sans regle d echange : "
+                f"ajoute-la a Layout.TAIL_GROUPS, sinon le miroir laisserait "
+                f"ces colonnes sur la mauvaise main sans lever d erreur."
+            )
+        base = batch.shape[-1] - layout.tail
+        for left, right, width in groups:
+            a = slice(base + left, base + left + width)
+            b = slice(base + right, base + right + width)
+            swap = out[..., a].copy()
+            out[..., a] = out[..., b]
+            out[..., b] = swap
 
     return out
 
@@ -814,7 +845,7 @@ def add_rich_features(batch, layout=None):
 
 
 def build_model(num_classes, units=96, feature_dim=155, cell="gru",
-                label_smoothing=0.0):
+                label_smoothing=0.0, project=0):
     """cell : 'gru', 'lstm' ou 'stack' (une couche de chaque).
 
     GRU et LSTM resolvent le meme probleme (gradients qui s'evanouissent dans
@@ -832,17 +863,39 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru",
         first = layers.GRU(units, return_sequences=True, dropout=0.3)
         second = layers.GRU(units, dropout=0.3)
 
-    model = models.Sequential([
+    body = [
         layers.Input(shape=(MAX_LEN, feature_dim)),
         # Les frames de remplissage sont entierement nulles ; une vraie frame
         # ne l'est jamais (la pose est detectee dans 97% des frames au moins).
         layers.Masking(mask_value=0.0),
+    ]
+
+    if project:
+        # Une dimension d entree qui entre DIRECTEMENT dans un GRU
+        # bidirectionnel coute 3 x unites x 2 parametres, soit 576 a 96
+        # unites, pour 580 clips d entrainement par fold. Avec une projection
+        # elle n en coute plus que `project`.
+        #
+        # Sans activation, volontairement : une projection lineaire isole
+        # l effet d economie de parametres, alors qu un ReLU y melerait un
+        # gain de non-linearite. Et ce qu on cherche a distinguer, ce sont de
+        # petits ecarts de distance entre doigts, qu un ReLU pourrait annuler.
+        #
+        # Le masque doit traverser : les frames de remplissage valent zero,
+        # mais une couche Dense rend son biais pour une entree nulle, donc
+        # sans propagation du masque le GRU lirait du remplissage non nul.
+        body.append(layers.TimeDistributed(
+            layers.Dense(project, activation=None), name="projection"))
+
+    body += [
         layers.Bidirectional(first),
         layers.Bidirectional(second),
         layers.Dense(128, activation="relu"),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation="softmax"),
-    ])
+    ]
+
+    model = models.Sequential(body)
 
     # sparse_categorical_crossentropy ne gere pas le lissage ; avec lissage
     # on passe donc par des labels one-hot.
@@ -882,6 +935,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--units", type=int, default=96)
+    parser.add_argument("--project", type=int, default=0, metavar="N",
+                        help="projeter l entree sur N dimensions avant le GRU, "
+                             "pour qu une feature coute N parametres au lieu de "
+                             "3 x unites x 2")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--velocity", action="store_true",
                         help="ajoute les deltas image-a-image (155 -> 310)")
@@ -948,6 +1005,12 @@ def main():
                         help="plafonner a N clips par glose, pour mesurer la "
                              "courbe d apprentissage et donc la valeur "
                              "marginale d un clip supplementaire")
+    parser.add_argument("--tip-confidence", action="store_true",
+                        help="confiance de chaque bout de doigt (10 colonnes). "
+                             "La moyenne par main masque l occlusion : quand la "
+                             "main se met de profil et que les doigts passent "
+                             "derriere la paume, la confiance des bouts tombe "
+                             "de 0.79 a 0.45. Exige --raw a l extraction.")
     parser.add_argument("--handshape", action="store_true",
                         help="8 scalaires d opposition du pouce, que le "
                              "repliement ne porte pas")
@@ -973,9 +1036,14 @@ def main():
 
     gating = (args.gate > 0.0 or args.gate_inside > 0.0 or args.gate_conflict)
 
+    if args.tip_confidence and not args.confidence:
+        parser.error("--tip-confidence s ajoute a --confidence : la regle "
+                     "d echange au miroir suppose les deux (queue de 12)")
+
     records = load_sequences(args.variants, args.features_dir,
                              with_confidence=args.confidence,
-                             with_meta=gating)
+                             with_meta=gating,
+                             with_tips=args.tip_confidence)
 
     if args.clips_from:
         reference = load_sequences(args.variants, args.clips_from, metadata_only=True)
@@ -1037,7 +1105,7 @@ def main():
 
     # Disposition construite a la main des qu il y a une queue : from_dim ne
     # peut pas la deviner sans ambiguite (voir son docstring).
-    tail = 2 if args.confidence else 0
+    tail = (2 if args.confidence else 0) + (10 if args.tip_confidence else 0)
     layout = Layout.from_dim(features.shape[2] - tail)
     layout.tail = tail
 
@@ -1106,7 +1174,16 @@ def main():
 
         return batch
 
-    base_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
+    # La velocite double les colonnes BRUTES uniquement : add_velocity est
+    # appliquee avant to_model, donc les scalaires derives sont ajoutes APRES
+    # le doublement et ne sont pas doubles. Multiplier le total, comme le
+    # faisait ce calcul, annoncait 310 colonnes pour 261 reelles — le modele
+    # etait construit a la mauvaise taille et levait une erreur de forme au
+    # premier batch. Le defaut dormait depuis toujours : --velocity n avait
+    # jamais ete combine avec --rich.
+    raw_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
+    base_dim = raw_dim * (2 if args.velocity else 1)
+
     if args.symmetry:
         base_dim += 2
     if args.handshape or args.handshape_full:
@@ -1115,7 +1192,8 @@ def main():
         base_dim += 23
     elif args.depth_proxy:
         base_dim += 4
-    feature_dim = base_dim * (2 if args.velocity else 1)
+
+    feature_dim = base_dim
     print(f"entree : ({features.shape[1]}, {feature_dim}), "
           f"{args.units} unites {args.cell}, budget {args.epochs} epochs\n")
 
@@ -1183,14 +1261,14 @@ def main():
         for seed_index in range(args.seeds):
             tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
-                                args.cell, args.label_smoothing)
+                                args.cell, args.label_smoothing, args.project)
 
             if pretrain_x is not None:
                 # Les signeurs du fold de test sont exclus du pre-entrainement
                 # aussi, sinon le modele les aurait vus avant l'affinage.
                 keep = ~np.isin(pretrain_signers, list(held))
                 head = build_model(len(set(pretrain_y)), args.units, feature_dim,
-                                   args.cell, args.label_smoothing)
+                                   args.cell, args.label_smoothing, args.project)
                 for _ in range(args.pretrain_epochs):
                     order = rng.permutation(int(keep.sum()))
                     px = augment_batch(pretrain_x[keep][order], rng, layout,
@@ -1281,6 +1359,7 @@ def main():
                 "folds": args.folds,
                 "epochs": args.epochs,
                 "units": args.units,
+                "project": args.project,
                 "glosses": len(glosses),
                 "sequences": len(records),
                 "cell": args.cell,
@@ -1297,6 +1376,7 @@ def main():
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,
                 "handshape": args.handshape,
+                "tip_confidence": args.tip_confidence,
                 "handshape_full": args.handshape_full,
                 "interpolate": args.interpolate,
                 "smooth": args.smooth,
@@ -1308,6 +1388,7 @@ def main():
                 "max_per_class": args.max_per_class,
                 "max_train_signers": args.max_train_signers,
                 "units": args.units,
+                "project": args.project,
                 "plateau_mean": float(tail.mean()),
                 "plateau_std": float(tail.std()),
                 # Le plateau PAR FOLD, et pas seulement sa moyenne : sans lui,

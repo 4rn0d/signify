@@ -62,6 +62,9 @@ SCORE_THRESHOLD = 0.3
 
 # Poignets de pose, qui tranchent quand les deux mains sont predites au meme
 # endroit, et seuil de recouvrement en largeurs d epaules.
+# Bouts de doigts dans le bloc de 21 points d une main.
+TIPS = [4, 8, 12, 16, 20]
+
 POSE_LEFT_WRIST = 9
 POSE_RIGHT_WRIST = 10
 # RTMPose est top-down : la boite personne est ramenee a l entree du modele,
@@ -116,6 +119,48 @@ def stretch_box(box, factor):
     """Prolonge la boite vers le bas, le haut du corps restant en place."""
     x1, y1, x2, y2 = box[:4]
     return np.array([x1, y1, x2, y1 + (y2 - y1) * factor], dtype=np.float32)
+
+
+class Speed:
+    """Vitesse d un point, en largeurs d epaules par seconde.
+
+    C est la grandeur que les features de velocite donneraient au modele. Son
+    interet se juge en comparant DEUX lectures : main immobile (ce qui reste
+    est du bruit d estimation) et main qui signe (signal + bruit). Si les deux
+    se ressemblent, la velocite n apporte rien — ce que la mesure sur le
+    dataset laissait penser, puisque les features de velocite n ont jamais
+    rien rapporte.
+
+    Normalisee par la largeur d epaules pour ne pas dependre de la distance,
+    et par le temps reel pour ne pas dependre de la cadence.
+    """
+
+    def __init__(self, window=10):
+        self.previous = None
+        self.stamp = None
+        self.values = deque(maxlen=window)
+
+    def update(self, point, scale, now):
+        if point is None or scale <= 1e-6:
+            self.previous = None
+            self.stamp = None
+            return
+        if self.previous is not None and self.stamp is not None:
+            elapsed = now - self.stamp
+            if elapsed > 1e-4:
+                moved = float(np.linalg.norm(point - self.previous)) / scale
+                self.values.append(moved / elapsed)
+        self.previous = np.array(point, dtype=np.float64)
+        self.stamp = now
+
+    @property
+    def value(self):
+        return float(np.mean(self.values)) if self.values else float("nan")
+
+    @property
+    def floor(self):
+        """La plus basse vitesse vue dans la fenetre : le plancher de bruit."""
+        return float(np.min(self.values)) if self.values else float("nan")
 
 
 class CurlJitter:
@@ -226,6 +271,7 @@ def run(mode, camera, log_path=None):
 
 
     jitter_track = {"G": CurlJitter(), "D": CurlJitter()}
+    speed_track = {"G": Speed(), "D": Speed()}
 
     pad_index = 0
     presence_index = 0
@@ -235,6 +281,10 @@ def run(mode, camera, log_path=None):
         """Les deux mesures dependent du reglage : on repart a zero pour ne
         pas melanger deux reglages dans une seule moyenne."""
         coverage.clear()
+        for track in speed_track.values():
+            track.values.clear()
+            track.previous = None
+            track.stamp = None
         for track in jitter_track.values():
             track.deltas.clear()
             track.levels.clear()
@@ -425,6 +475,7 @@ def run(mode, camera, log_path=None):
                     for label, block, visible in (("G", LEFT_HAND, left_ok),
                                                   ("D", RIGHT_HAND, right_ok)):
                         if not visible:
+                            speed_track[label].update(None, scale, time.time())
                             jitter_track[label].update(None)
                             rows.append((f"main {label} : absente", C_DIM))
                             continue
@@ -437,6 +488,34 @@ def run(mode, camera, log_path=None):
                         direction = hand[9] - hand[0]
                         angle = np.degrees(np.arctan2(-direction[1], direction[0]))
                         rows.append((f"   paume {palm:.2f}  angle {angle:+.0f}deg", C_DIM))
+
+                        # Confiance de chaque bout de doigt. Quand la main se
+                        # met de profil et que les doigts passent derriere la
+                        # paume, RTMPose continue de rendre 21 points mais sa
+                        # confiance chute : mesure sur le dataset, 0.79 de face
+                        # contre 0.45 de profil. La moyenne par main masque
+                        # cela, d ou l interet de les montrer un par un.
+                        speed_track[label].update(hand[0], scale, time.time())
+                        speed = speed_track[label]
+                        rows.append((
+                            f"   vitesse {speed.value:5.2f} lg/s"
+                            f"   plancher {speed.floor:5.2f}",
+                            C_TEXT,
+                        ))
+
+                        tips = confidence[block][TIPS]
+                        worst = float(tips.min())
+                        rows.append((
+                            "   bouts " + " ".join(f"{v:.2f}" for v in tips),
+                            C_OK if worst > 0.6 else (C_WARN if worst > 0.4 else C_BAD),
+                        ))
+                        ratio = palm / max(
+                            float(np.linalg.norm(hand[9] - hand[0]) / scale), 1e-6)
+                        rows.append((
+                            f"   paume/longueur {ratio:.2f}"
+                            + ("   doigts probablement caches" if ratio < 0.35 else ""),
+                            C_BAD if ratio < 0.35 else C_DIM,
+                        ))
                         rows.append((f"   au buste {np.linalg.norm(hand[0]-centre)/scale:.2f}"
                                      f"  au nez {np.linalg.norm(hand[0]-points[0])/scale:.2f}", C_DIM))
 
@@ -455,7 +534,7 @@ def run(mode, camera, log_path=None):
                         track = jitter_track[label]
                         if track.deltas:
                             rows.append((
-                                f"gigue repli {label} {track.jitter:.4f}   "
+                                f"vitesse repli {label} {track.jitter:.4f}/frame  "
                                 f"S/B {track.ratio:.2f}",
                                 C_TEXT,
                             ))
