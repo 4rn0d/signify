@@ -21,6 +21,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -94,6 +95,10 @@ def load_subset(size, metadata_path=METADATA_PATH):
                     "gloss": gloss["gloss"],
                     "url": inst["url"],
                     "signer_id": inst["signer_id"],
+                    # Sans lui, --variants dominant ne filtre plus rien :
+                    # 19 des 50 gloses cibles ont plusieurs variantes, et
+                    # n en garder qu une valait +5.6 points.
+                    "variation_id": inst.get("variation_id", 0),
                     "split": inst["split"],
                     "fps": inst["fps"],
                     "frame_start": inst["frame_start"],
@@ -176,12 +181,38 @@ def download_youtube(clip):
     return os.path.getsize(path)
 
 
+SAFE = re.compile(r"[^a-z0-9_]")
+
+
+def organised_path(clip):
+    """Ou organise_videos.py aurait range ce clip.
+
+    Doit rester identique a target_name() dans organise_videos.py : meme
+    nettoyage du nom de glose, meme motif de fichier.
+    """
+    gloss = SAFE.sub("", clip["gloss"].replace(" ", "_").lower())
+    return os.path.join(
+        VIDEO_DIR, gloss, f"{gloss}_s{clip['signer_id']}_{clip['video_id']}.mp4")
+
+
+def existing_file(clip):
+    """Le clip est-il deja sur le disque, a plat OU range ?"""
+    for path in (target_path(clip["video_id"]), organised_path(clip)):
+        if os.path.exists(path) and os.path.getsize(path) > 2048:
+            return path
+    return None
+
+
 def fetch(clip):
     """Retourne (clip, status, detail)."""
     path = target_path(clip["video_id"])
 
-    if os.path.exists(path) and os.path.getsize(path) > 2048:
-        return clip, "cached", os.path.getsize(path)
+    # Le cache doit regarder les DEUX dispositions : relancer sur un dossier
+    # deja range retenterait sinon tous les clips existants, et ceux dont le
+    # lien est mort repasseraient en "failed" dans le manifeste reecrit.
+    found = existing_file(clip)
+    if found is not None:
+        return clip, "cached", os.path.getsize(found)
 
     if host_of(clip["url"]) in DEAD_HOSTS:
         return clip, "skipped_dead_host", host_of(clip["url"])
@@ -195,6 +226,47 @@ def fetch(clip):
     except Exception as error:
         detail = f"{type(error).__name__}: {str(error)[:120]}"
         return clip, "failed", detail
+
+
+def merge_manifest(fresh, path=MANIFEST_PATH):
+    """Fusionne les nouveaux resultats dans le manifeste existant.
+
+    Deux regles, et la seconde compte autant que la premiere :
+
+      - les entrees absentes des nouveaux resultats sont CONSERVEES. Un run
+        partiel ou limite ne doit pas effacer le reste du dataset.
+      - une entree qui possede un fichier n est jamais degradee par un
+        resultat sans fichier. Un lien mort aujourd hui ne doit pas effacer un
+        clip recupere hier par le miroir.
+    """
+    existing = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            for record in json.load(handle):
+                existing[record["video_id"]] = record
+
+    kept = replaced = protected = 0
+    for record in fresh:
+        old_record = existing.get(record["video_id"])
+        if old_record is not None and old_record.get("path") and not record.get("path"):
+            protected += 1          # on garde le clip qu on a deja
+            continue
+        if old_record is None:
+            kept += 1
+            existing[record["video_id"]] = record
+        else:
+            replaced += 1
+            # Champ par champ, et non remplacement : un champ absent du
+            # nouveau resultat est conserve de l ancien. C est ce qui a
+            # failli effacer variation_id de 1321 entrees, et ce qui
+            # protegera le prochain champ que ce script oubliera.
+            merged_record = dict(old_record)
+            merged_record.update(record)
+            existing[record["video_id"]] = merged_record
+
+    merged = sorted(existing.values(), key=lambda r: str(r["video_id"]))
+    return merged, {"ajoutes": kept, "mis_a_jour": replaced,
+                    "preserves": protected, "total": len(merged)}
 
 
 def main():
@@ -232,6 +304,7 @@ def main():
                     "video_id": clip["video_id"],
                     "gloss": clip["gloss"],
                     "signer_id": clip["signer_id"],
+                    "variation_id": clip.get("variation_id", 0),
                     "split": clip["split"],
                     "fps": clip["fps"],
                     "frame_start": clip["frame_start"],
@@ -258,15 +331,33 @@ def main():
                     flush=True,
                 )
 
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as handle:
-        json.dump(results, handle, ensure_ascii=False, indent=1)
+    merged, stats = merge_manifest(results)
+
+    if args.limit:
+        # --limit est documente "pour test" et reecrivait pourtant le
+        # manifeste : il est passe de 2038 entrees a 200. Un run limite ne
+        # traite qu un echantillon, donc il n a rien a dire sur le reste.
+        print()
+        print(f"  --limit actif : manifeste NON ecrit "
+              f"({stats['ajoutes']} auraient ete ajoutes, "
+              f"{stats['mis_a_jour']} mis a jour)")
+    else:
+        temporary = MANIFEST_PATH + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(merged, handle, ensure_ascii=False, indent=1)
+        os.replace(temporary, MANIFEST_PATH)    # remplacement atomique
+        print()
+        print(f"  manifeste fusionne : {stats['total']} entrees "
+              f"({stats['ajoutes']} ajoutees, {stats['mis_a_jour']} mises a jour, "
+              f"{stats['preserves']} preservees d un clip deja possede)")
 
     have = counts["ok"] + counts["cached"]
     print(f"\n{'=' * 60}")
     print(f"  recuperees : {have}/{len(clips)} ({have / len(clips):.0%})")
     print(f"  echecs     : {counts['failed']}")
     print(f"  ignorees   : {counts['skipped_dead_host']} (hebergeurs morts)")
-    print(f"  manifeste  : {MANIFEST_PATH}")
+    print(f"  manifeste  : "
+          + ("NON ecrit (--limit)" if args.limit else MANIFEST_PATH))
     print(f"\n  Lance audit_downloaded.py pour voir ce qui reste par glose.")
 
 

@@ -966,6 +966,11 @@ def main():
     parser.add_argument("--seeds", type=int, default=1,
                         help="modeles par fold, moyennes (ensemble)")
     parser.add_argument("--pretrain-epochs", type=int, default=60)
+    parser.add_argument("--pretrain-probe", default="",
+                        help="points de mesure du pre-entrainement, en epochs, "
+                             "separes par des virgules : un seul "
+                             "pre-entrainement est fait jusqu au plus grand, "
+                             "et l affinage repart des poids de chacun")
     parser.add_argument("--pretrain-vocab", type=int, default=0,
                         help="pre-entraine sur les N gloses les mieux fournies "
                              "avant d'affiner sur le sous-ensemble cible")
@@ -1039,6 +1044,14 @@ def main():
     if args.tip_confidence and not args.confidence:
         parser.error("--tip-confidence s ajoute a --confidence : la regle "
                      "d echange au miroir suppose les deux (queue de 12)")
+
+    probes = sorted({int(x) for x in args.pretrain_probe.split(",") if x.strip()})
+    if probes:
+        if not args.pretrain_vocab:
+            parser.error("--pretrain-probe demande --pretrain-vocab")
+        if min(probes) < 1:
+            parser.error("les sondes doivent etre des epochs >= 1")
+        args.pretrain_epochs = max(probes)
 
     records = load_sequences(args.variants, args.features_dir,
                              with_confidence=args.confidence,
@@ -1205,6 +1218,11 @@ def main():
     histories = []
     out_of_fold = []
     seed_curves = []
+    pretrain_curves = []
+
+    # Sans sonde, une seule "sonde" implicite : le comportement d avant.
+    probe_list = probes if probes else [None]
+    probe_histories = {probe: [] for probe in probe_list}
 
     pretrain_x = pretrain_y = None
     if args.pretrain_vocab:
@@ -1259,6 +1277,7 @@ def main():
         # et c'est precisement cette variance que l'ensemble convertit en
         # precision.
         curves = []
+        probe_curves = {probe: [] for probe in probe_list}
         for seed_index in range(args.seeds):
             tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
@@ -1270,7 +1289,13 @@ def main():
                 keep = ~np.isin(pretrain_signers, list(held))
                 head = build_model(len(set(pretrain_y)), args.units, feature_dim,
                                    args.cell, args.label_smoothing, args.project)
-                for _ in range(args.pretrain_epochs):
+                snapshots = {}
+                # La boucle tournait sans rien rapporter : impossible de dire
+                # apres coup si 60 epochs suffisaient, si c etait trop, ou si
+                # le pre-entrainement avait seulement commence a converger.
+                # On garde donc sa precision, sur sa propre tache.
+                pretrain_curve = []
+                for index in range(args.pretrain_epochs):
                     order = rng.permutation(int(keep.sum()))
                     px = augment_batch(pretrain_x[keep][order], rng, layout,
                                        args.hand_dropout)
@@ -1280,38 +1305,94 @@ def main():
                     py = pretrain_y[keep][order]
                     if args.label_smoothing > 0:
                         py = tf.keras.utils.to_categorical(py, len(set(pretrain_y)))
-                    head.fit(px, py, batch_size=args.batch, epochs=1, verbose=0)
+                    history = head.fit(px, py, batch_size=args.batch,
+                                       epochs=1, verbose=0)
+                    pretrain_curve.append(round(
+                        float(history.history["accuracy"][0]), 4))
 
-                # On reprend tout sauf la couche de sortie, dont le nombre de
-                # classes differe.
-                for target, source in zip(model.layers[:-1], head.layers[:-1]):
-                    if source.get_weights():
-                        target.set_weights(source.get_weights())
+                    # Poids figes aux points demandes. Les sondes partagent
+                    # ainsi UNE trajectoire : des runs separes en auraient
+                    # chacun une differente, et l ecart entre 120 et 240
+                    # melangerait "plus d epochs" et "autre trajectoire".
+                    if probes and (index + 1) in probes:
+                        snapshots[index + 1] = [
+                            layer.get_weights() for layer in head.layers[:-1]]
 
-            curve = []
-            for epoch in range(args.epochs):
-                order = rng.permutation(len(train_x))
-                batch_x = augment_batch(train_x[order], rng, layout,
-                                        args.hand_dropout)
-                if args.velocity:
-                    batch_x = add_velocity(batch_x)
-                batch_x = to_model(batch_x)
+                if pretrain_curve and seed_index == 0:
+                    marks = [0, len(pretrain_curve) // 4,
+                             len(pretrain_curve) // 2, len(pretrain_curve) - 1]
+                    shown = "  ".join(
+                        f"e{m + 1} {pretrain_curve[m]:.3f}"
+                        for m in sorted(set(marks)))
+                    print(f"    pre-entrainement ({args.pretrain_epochs} epochs,"
+                          f" {len(set(pretrain_y))} gloses) : {shown}", flush=True)
+                    pretrain_curves.append(pretrain_curve)
 
-                fit_y = train_y[order]
-                if args.label_smoothing > 0:
-                    fit_y = tf.keras.utils.to_categorical(fit_y, len(glosses))
+            # Un affinage par sonde, chacun repartant des poids figes a son
+            # epoch. Sans sonde, une seule passe, depuis la fin du
+            # pre-entrainement : exactement le comportement d avant.
+            for probe in probe_list:
+                if probe is None:
+                    fresh = model
+                else:
+                    tf.keras.utils.set_random_seed(
+                        args.seed + fold_index * 100 + seed_index)
+                    fresh = build_model(len(glosses), args.units, feature_dim,
+                                        args.cell, args.label_smoothing,
+                                        args.project)
 
-                model.fit(batch_x, fit_y, batch_size=args.batch,
-                          epochs=1, verbose=0)
+                if pretrain_x is not None:
+                    # Tout sauf la couche de sortie, dont le nombre de classes
+                    # differe entre la tache de pre-entrainement et la cible.
+                    source = (snapshots[probe] if probe is not None
+                              else [l.get_weights() for l in head.layers[:-1]])
+                    for target, weights in zip(fresh.layers[:-1], source):
+                        if weights:
+                            target.set_weights(weights)
 
-                probabilities = model.predict(eval_x, verbose=0)
-                if args.tta:
-                    # L'entrainement traite deja le miroir comme preservant le
-                    # label : moyenner avec lui est coherent.
-                    probabilities = probabilities + model.predict(mirror_x, verbose=0)
-                curve.append(probabilities)
+                curve = []
+                for epoch in range(args.epochs):
+                    order = rng.permutation(len(train_x))
+                    batch_x = augment_batch(train_x[order], rng, layout,
+                                            args.hand_dropout)
+                    if args.velocity:
+                        batch_x = add_velocity(batch_x)
+                    batch_x = to_model(batch_x)
 
-            curves.append(curve)
+                    fit_y = train_y[order]
+                    if args.label_smoothing > 0:
+                        fit_y = tf.keras.utils.to_categorical(fit_y, len(glosses))
+
+                    fresh.fit(batch_x, fit_y, batch_size=args.batch,
+                              epochs=1, verbose=0)
+
+                    probabilities = fresh.predict(eval_x, verbose=0)
+                    if args.tta:
+                        # L'entrainement traite deja le miroir comme preservant
+                        # le label : moyenner avec lui est coherent.
+                        probabilities = probabilities + fresh.predict(
+                            mirror_x, verbose=0)
+                    curve.append(probabilities)
+
+                probe_curves[probe].append(curve)
+
+            curves = probe_curves[probe_list[-1]]
+
+        # Chaque sonde recoit la meme mesure : precision par epoch, graines
+        # moyennees, puis moyenne des 30 dernieres.
+        for probe in probe_list:
+            group = probe_curves[probe]
+            tail = []
+            for epoch in range(max(args.epochs - 30, 0), args.epochs):
+                summed = sum(c[epoch] for c in group)
+                tail.append(float((summed.argmax(axis=1) == test_y).mean()))
+            probe_histories[probe].append(round(float(np.mean(tail)), 4))
+
+        if probes:
+            shown = "  ".join(
+                f"{probe}e {probe_histories[probe][-1]:.4f}"
+                for probe in probe_list)
+            print(f"    sondes de pre-entrainement : {shown}", flush=True)
 
         # Precision par epoch, ensemble des graines moyenne.
         curve = []
@@ -1408,6 +1489,7 @@ def main():
                 "tta": bool(args.tta),
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
+                "pretrain_epochs": args.pretrain_epochs,
                 "vocab": args.vocab,
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,
@@ -1440,6 +1522,9 @@ def main():
                 "curves": histories,
                 "out_of_fold": out_of_fold,
                 "by_seed_count": seed_curves,
+                "pretrain_curves": pretrain_curves,
+                "pretrain_probes": {str(k): v for k, v in probe_histories.items()
+                                    if k is not None},
                 "classes": glosses,
             },
             handle, ensure_ascii=False, indent=1,
