@@ -966,6 +966,12 @@ def main():
     parser.add_argument("--seeds", type=int, default=1,
                         help="modeles par fold, moyennes (ensemble)")
     parser.add_argument("--pretrain-epochs", type=int, default=60)
+    parser.add_argument("--shared-pretrain", action="store_true",
+                        help="un seul pre-entrainement par fold, partage par "
+                             "toutes les graines. 2.7x plus rapide a 5 graines, "
+                             "mais les graines partent des memes poids et "
+                             "divergent moins, donc l ensemble peut rapporter "
+                             "moins.")
     parser.add_argument("--pretrain-probe", default="",
                         help="points de mesure du pre-entrainement, en epochs, "
                              "separes par des virgules : un seul "
@@ -1278,12 +1284,17 @@ def main():
         # precision.
         curves = []
         probe_curves = {probe: [] for probe in probe_list}
+        # Jamais partage ENTRE folds : le pre-entrainement exclut les signeurs
+        # du fold de test, donc le reutiliser ailleurs serait une fuite.
+        shared = None
         for seed_index in range(args.seeds):
             tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
                                 args.cell, args.label_smoothing, args.project)
 
-            if pretrain_x is not None:
+            reuse = args.shared_pretrain and shared is not None
+
+            if pretrain_x is not None and not reuse:
                 # Les signeurs du fold de test sont exclus du pre-entrainement
                 # aussi, sinon le modele les aurait vus avant l'affinage.
                 keep = ~np.isin(pretrain_signers, list(held))
@@ -1328,6 +1339,14 @@ def main():
                           f" {len(set(pretrain_y))} gloses) : {shown}", flush=True)
                     pretrain_curves.append(pretrain_curve)
 
+            if pretrain_x is not None and not reuse:
+                # Poids finaux mis de cote : avec --shared-pretrain les graines
+                # suivantes repartent de la, sans refaire le pre-entrainement.
+                shared = {
+                    "final": [l.get_weights() for l in head.layers[:-1]],
+                    "snapshots": {k: v for k, v in snapshots.items()},
+                }
+
             # Un affinage par sonde, chacun repartant des poids figes a son
             # epoch. Sans sonde, une seule passe, depuis la fin du
             # pre-entrainement : exactement le comportement d avant.
@@ -1344,8 +1363,8 @@ def main():
                 if pretrain_x is not None:
                     # Tout sauf la couche de sortie, dont le nombre de classes
                     # differe entre la tache de pre-entrainement et la cible.
-                    source = (snapshots[probe] if probe is not None
-                              else [l.get_weights() for l in head.layers[:-1]])
+                    source = (shared["snapshots"][probe] if probe is not None
+                              else shared["final"])
                     for target, weights in zip(fresh.layers[:-1], source):
                         if weights:
                             target.set_weights(weights)
@@ -1490,6 +1509,7 @@ def main():
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
                 "pretrain_epochs": args.pretrain_epochs,
+                "shared_pretrain": args.shared_pretrain,
                 "vocab": args.vocab,
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,

@@ -1058,6 +1058,56 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### Sharing the pretraining across seeds: stopped early, decided on judgment
+
+The pretraining dominates the cost. At 5 seeds each fold pretrains five times,
+which is 2.7x the total run time, and all five runs learn the same task on the
+same clips. Sharing one pretraining across the seeds would make the planned
+cumulative run drop from ~10 h to ~3.5 h and put 8 seeds within reach.
+
+The objection is that an ensemble only pays if its members disagree, and
+per-seed pretraining is plausibly where most of that disagreement comes from.
+Shared, the seeds start from *identical* weights and diverge only through
+shuffle order and fine-tuning dropout.
+
+`--shared-pretrain` was added to measure instead of assume. It never shares
+across *folds* — pretraining excludes the held-out fold's signers, so carrying
+weights between folds would leak test signers — only across seeds within a
+fold. Arm A is the existing `proj_everything` run (0.7413), which already is
+per-seed pretraining at the default 60 epochs; arm B repeats it with
+`--pretrain-epochs 60 --shared-pretrain` so sharing is the only difference.
+
+Stopped at 4 of 5 folds, plateau metric:
+
+```
+          A per-seed    B shared      diff
+fold 1      0.7770       0.7815      +0.0046
+fold 2      0.6917       0.6246      -0.0671
+fold 3      0.7193       0.7218      +0.0025
+fold 4      0.7248       0.6963      -0.0285
+mean        0.7282       0.7061      -0.0221
+```
+
+**No fold gains, two lose, two are flat.** Folds 1 and 3 sit within noise;
+folds 2 and 4 drop clearly, and fold 2 is also where A scored lowest. The sign
+is consistent across every fold that moved at all, but at n=4 the test gives
+t = -1.32 against a threshold of 3.18, so **-2.2 is a direction, not a
+measurement**, and should not be quoted as one. A's 5-fold mean is 0.7413; on
+these four common folds it is 0.7282, so fold 5 is A's easiest.
+
+Decision taken without finishing it, as a judgment call rather than a result:
+**keep per-seed pretraining.** The reading that fits the shape of the data is
+that seed diversity is worth little when the fold is easy and worth real points
+when it is hard — and the hard case is the
+one that matters, since the live demo on new signers is harder than any fold.
+Sharing would buy speed exactly where accuracy is already fine and cost it
+where it is not. Partial result kept at
+`models/wlasl_kfold_shared60_3folds.json`.
+
+So the cumulative run costs its full price: ~10 h at 5 seeds, ~6 h at 3. The
+`--shared-pretrain` flag stays in the harness; if the budget ever binds, the
+test to finish is this one, and only fold 5 is missing.
+
 ### The 150 epochs are fine; the 60 pretraining epochs are unexamined
 
 Early stopping was asked about and the measurement says there is nothing to
@@ -1087,17 +1137,29 @@ nobody has questioned.
 Queued, by value rather than by cost:
 
 ```
-1  REBUILD THE SHIPPED MODEL on the 0.7413 config     +6.5 available now
+1  THE CUMULATIVE RUN, every confirmed gain at once    the agreed next step
+   @0.7 + rich + confidence + handshape-full
+   + projection 48 + PILE + gate
+   + --pretrain-vocab 300 --pretrain-epochs 120
+   + 5 seeds + 5 snapshots per seed
+   Two pieces easy to forget: drop --clips-from (726
+   -> 733 target clips) and widen the SCAFFOLD to all
+   variants, 3032 -> 3428 clips, which needs a
+   --pretrain-variants flag that does not exist yet.
+   Per-seed pretraining, not shared (§ above).
+   ~10 h at 5 seeds, ~6 h at 3.
+
+2  REBUILD THE SHIPPED MODEL on whatever 1 produces    +6.5 available now
    train_final.py needs --project and --handshape-full;
    the demo reads both from the card already.
    ~1 h with 5 seeds. The demo currently runs ~0.67.
 
-2  record pretrain_epochs in the k-fold results        one line
-   (same gap as the `seeds: None` found in the model card)
+3  confirm --pretrain-vocab 300 on all five folds      +3.3 on ONE fold
+   Fold 1 only, and fold 1 is the easiest. A 5-fold
+   run at --pretrain-epochs 120, single fine-tuning,
+   is ~2 h and settles whether 300 belongs in item 1.
 
-3  ship with 5 seeds, keep measuring with 3            +1.0 expected
-
-4  sweep --pretrain-epochs 30 / 60 / 120 at 1 seed     ~1 h, untested
+4  ship with 5 seeds, keep measuring with 3            +1.0 expected
 
 5  confirm on FRESH fold seeds (`--seed`)              validity, not points
    ~35 experiments have run against the same 5 folds.
@@ -1109,12 +1171,18 @@ Queued, by value rather than by cost:
    ensemble (§7.5h) against +0.0254 on single-seed runs.
    The seeds already capture that variance reduction.
    Still free, no longer the headline.
+
+   CLOSED: pretrain_epochs is now recorded in the
+   results; the 30/60/120 sweep ran (§7.5i: duration
+   stops mattering by ~60); sharing the pretraining
+   across seeds was tested and rejected (§ above).
 ```
 
-Guess on record for item 4, so it can be wrong: pretraining *length* should
-matter less than its vocabulary size, since what transfers is generic hand and
-body motion rather than gloss-specific knowledge, and 60 epochs is already
-past where that would be learned.
+Guess on record for item 3, so it can be wrong: pretraining *breadth*
+should matter more than its length, since what transfers is generic hand
+and body motion rather than gloss-specific knowledge. The 30/60/120 sweep
+already bore out the second half of that (duration stops mattering by ~60);
+item 3 tests the first half.
 
 ---
 
