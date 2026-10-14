@@ -1181,7 +1181,13 @@ Queued, by value rather than by cost:
 Item 1 as a command, every flag deliberate and none inherited by accident:
 
 ```
-python src/wlasl/train_kfold.py --folds 5 --epochs 150 --vocab 50   --variants dominant --features-dir data/wlasl/features_rtm_all   --rich --confidence --handshape-full   --gate 0.7 --gate-inside 0.5 --gate-conflict   --project 48 --label-smoothing 0.1 --tta --seeds 3   --pretrain-vocab 300 --pretrain-epochs 120 --pretrain-variants all   --vocab-from data/wlasl/features --tag _best
+python src/wlasl/train_kfold.py --folds 5 --epochs 150 --vocab 50 \
+  --variants dominant --features-dir data/wlasl/features_rtm_all \
+  --rich --confidence --handshape-full \
+  --gate 0.7 --gate-inside 0.5 --gate-conflict \
+  --project 48 --label-smoothing 0.1 --tta --seeds 3 \
+  --pretrain-vocab 300 --pretrain-epochs 120 --pretrain-variants all \
+  --vocab-from data/wlasl/features --tag _best
 ```
 
 `--vocab-from data/wlasl/features` keeps the 50 target glosses identical to
