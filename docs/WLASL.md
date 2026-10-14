@@ -1036,8 +1036,20 @@ snapshots.
 curve:
 
 ```
-entrainement final   ~13 min par graine    3 -> 38 min, 5 -> 63, 8 -> 101
-k-fold (mesure)      3 graines ~2 h,  5 graines ~3 h 20
+MESURE, octobre 2026, projection 48 + echafaudage 300 gloses :
+
+  epoch d affinage k-fold   2.92 s  (580 clips + evaluation TTA)
+  epoch d affinage expedie  ~3.2 s  (733 clips, pas d evaluation)
+  epoch de pre-entrainement ~15 s   (3428 clips, 300 gloses)
+  chargement des features    95 s   une fois par run
+
+entrainement final   ~38 min par graine    3 -> 1 h 55, 5 -> 3 h 10, 8 -> 5 h
+k-fold (mesure)      3 graines ~9 h,  5 graines ~15 h
+
+Les 13 min par graine citees avant mesure valaient pour l echafaudage a 100
+gloses et 60 epochs. Le pre-entrainement est desormais 4/5 du cout : 30 des
+38 minutes par graine. C est le seul levier de vitesse qui reste, et c est
+celui que --shared-pretrain aurait actionne.
 
 3 -> 5   environ +1.0 point
 3 -> 8   environ +1.6
@@ -1104,7 +1116,7 @@ Sharing would buy speed exactly where accuracy is already fine and cost it
 where it is not. Partial result kept at
 `models/wlasl_kfold_shared60_3folds.json`.
 
-So the cumulative run costs its full price: ~10 h at 5 seeds, ~6 h at 3. The
+So the cumulative run costs its full price: ~15 h at 5 seeds, ~9 h at 3. The
 `--shared-pretrain` flag stays in the harness; if the budget ever binds, the
 test to finish is this one, and only fold 5 is missing.
 
@@ -1146,8 +1158,9 @@ Queued, by value rather than by cost:
    -> 733 target clips) and widen the SCAFFOLD with
    --pretrain-variants all, 3032 -> 3428 clips (same
    300 glosses, measured). Per-seed pretraining, not
-   shared (§ above). ~10 h at 5 seeds, ~6 h at 3.
-   Command below.
+   shared (§ above). ~15 h at 5 seeds, ~9 h at 3 --
+   NOT the ~10/~6 quoted before measuring, which
+   predated tripling the scaffold. Command below.
 
 2  REBUILD THE SHIPPED MODEL on whatever 1 produces    +6.5 available now
    train_final.py needs --project and --handshape-full;
