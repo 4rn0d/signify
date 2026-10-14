@@ -953,6 +953,14 @@ def main():
                              "la tache changerait silencieusement de taille.")
     parser.add_argument("--variants", default="all",
                         choices=("all", "dominant", "split"))
+    parser.add_argument("--pretrain-variants", default="",
+                        choices=("", "all", "dominant", "split"),
+                        help="filtrage des variantes pour l echafaudage de "
+                             "pre-entrainement seulement. Vide = comme "
+                             "--variants. 'all' lui rend les 14%% de clips que "
+                             "'dominant' ecarte, au prix d etiquettes "
+                             "contradictoires dont l echafaudage n a de toute "
+                             "facon pas besoin.")
     parser.add_argument("--rich", action="store_true",
                         help="23 scalaires derives de x,y (profondeur, "
                              "configuration, emplacement, orientation)")
@@ -1239,7 +1247,9 @@ def main():
         # Le MEME extracteur et les MEMES colonnes que l affinage : sans
         # --features-dir cet appel relisait le dossier par defaut (MediaPipe,
         # 155 colonnes) pour pre-entrainer un modele affine ensuite sur 129.
-        extra = load_sequences(args.variants, args.features_dir,
+        # Les variantes se filtrent separement : voir --pretrain-variants.
+        extra = load_sequences(args.pretrain_variants or args.variants,
+                               args.features_dir,
                                with_confidence=args.confidence)
         counts = collections.Counter(r["gloss"] for r in extra)
         wide = {g for g, _ in counts.most_common(args.pretrain_vocab)}
@@ -1249,7 +1259,10 @@ def main():
         pretrain_x = np.stack([pad_sequence(r["features"]) for r in extra])
         pretrain_y = np.array([wide_index[r["gloss"]] for r in extra], dtype=np.int32)
         pretrain_signers = np.array([r["signer_id"] for r in extra])
-        print(f"pre-entrainement : {len(extra)} sequences, {len(wide)} gloses\n")
+        chosen = args.pretrain_variants or args.variants
+        note = "" if chosen == args.variants else f", variantes {chosen}"
+        print(f"pre-entrainement : {len(extra)} sequences, "
+              f"{len(wide)} gloses{note}\n")
 
     for fold_index, held in enumerate(folds, start=1):
         test_mask = np.isin(signers, list(held))
@@ -1508,6 +1521,7 @@ def main():
                 "tta": bool(args.tta),
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
+                "pretrain_variants": args.pretrain_variants or args.variants,
                 "pretrain_epochs": args.pretrain_epochs,
                 "shared_pretrain": args.shared_pretrain,
                 "vocab": args.vocab,
