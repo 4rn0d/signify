@@ -887,6 +887,56 @@ fold. A 2 h run that wrote nothing until the end lost everything to an
 interruption once, after two folds that held the project's two best scores at
 the time.
 
+### 7.5i Pretraining: duration stops mattering early, breadth may not
+
+`--pretrain-epochs 60` was an unexamined default: never varied, not recorded
+in the results, unjustified in these docs, and its loop ran blind. All three
+are now fixed, and the sweep says the duration barely matters.
+
+```
+100 gloses / 1127 clips, 5 folds
+   0 epochs   0.6838  std 0.0538
+  30 epochs   0.6916  std 0.0504   t +0.65  3/5
+  60 epochs   0.7054  std 0.0321   t +1.26  3/5
+ 120 epochs   0.7009  std 0.0370   t +1.03  4/5
+```
+
+Not monotonic, and **none of it significant** — the whole range spans 2.2
+points. On fold 1 alone the trend is *negative* (0.7498 at 0 epochs down to
+0.7162 at 120), which shows how little signal the mean was carrying.
+
+The observability added here explains why. The pretraining task keeps
+improving long after the transfer stops: ~0.50 accuracy at epoch 60, 0.737 at
+120, and 0.834 at 360 on the 300-gloss version. With ~10 clips per gloss that
+is **memorisation**, so the later epochs learn gloss-specific detail — and
+gloss-specific detail is precisely what does not transfer to a 50-class task.
+
+A correction worth recording: on seeing the pretraining curve still climbing at
+60, this document briefly claimed the "60 is already past where that is
+learned" guess was wrong. It was not. A rising *pretraining* accuracy is not
+evidence of better *transfer*, and conflating the two was the error.
+
+**Breadth is a different lever from duration.** Expanding the scaffold from 100
+to 300 glosses (1127 -> 3032 clips after variant filtering) on fold 1:
+
+```
+100 gloses, best over all durations   0.7498
+300 gloses   120e 0.7758   240e 0.7824   360e 0.7753
+                                      +0.0326 on this fold
+```
+
+All three 300-gloss probes beat every 100-gloss result on that fold, and the
+probes are flat among themselves — consistent with more *glosses* pushing
+toward generic motion while more *epochs* push toward gloss-specific detail.
+One fold only, and fold 1 is the easiest draw, so this is unconfirmed.
+
+Methodology: `--pretrain-probe 120,240,360` pretrains once to the largest
+probe, freezes weights at each, and fine-tunes from each. It saves 30% at
+three probes and 42% at six since fine-tuning dominates, but the better reason
+is that the probes share one pretraining trajectory — separate runs each draw
+their own, so a 120-vs-240 comparison would mix "more epochs" with "different
+trajectory".
+
 ### 7.6 Two metrics, and a reporting error
 
 Every paired t-test in this phase was run on `per_fold`, which holds the
