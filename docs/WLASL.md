@@ -6,8 +6,10 @@ pipeline: a sign is defined by movement, often uses two hands, and carries
 meaning in *where* it happens relative to the body — none of which a
 single-frame image classifier represents.
 
-**Current state:** 0.6762 ± 0.0619 on 50 signs, chance 0.0200 — **34× chance**,
-on a signer-disjoint split, with MediaPipe features and the full training stack.
+**Current state:** 0.7413 ± 0.0380 on 50 signs, chance 0.0200 — **37× chance**,
+on a signer-disjoint split: RTMPose features at hand threshold 0.7, derived
+scalars, per-hand confidence, the full handshape block, a linear input
+projection, and the full training stack.
 
 The landmark extractor was then changed to RTMPose (§7), which finds hands in
 84% of frames against MediaPipe's 47%. Compared like for like, without the
@@ -841,6 +843,49 @@ through it, and the bidirectional GRU sees the frames where the fingers were
 visible.
 
 Running total: 34 experiments, 7 of which gained anything.
+
+### 7.5h The projection plus the full stack: 0.7413
+
+The confirmation run the projection owed, with the full training stack on top:
+
+```
+projection 48 + full handshape + STACK   0.7413  std 0.0380   37x chance
+   folds  0.777  0.692  0.719  0.725  0.794
+
+MediaPipe + stack                        0.6762   +0.0651
+RTMPose + conf + stack                   0.6675   +0.0737
+projection + handshape, bare             0.6462   +0.0951
+```
+
+**The stack's contribution on top of the projection is +9.5 points, 5/5 folds,
+t=+4.75 — significant**, and the two gains stack cleanly: the stack was worth
+~+8 in every other configuration and the projection ~+4.7 bare, so they are
+additive rather than overlapping.
+
+Three things make this firmer than the earlier suggestive results:
+
+**Variance collapsed.** Standard deviation 0.0380, against 0.0591-0.0619 for
+every previous configuration. The weakest fold is 0.692 where folds previously
+ran as low as 0.5639, and fold 2 — which sat at 0.51-0.62 all day — reaches
+0.692.
+
+**It retroactively supports the projection**, whose own run was only t=2.42
+and was recorded as unproven. The 3-seed ensemble reduces variance, and under
+that reduced noise the combination lands 6.5 points clear.
+
+**Snapshot averaging adds only +0.5 here**, against +2.5 on single-seed runs —
+the correlation predicted in §7.8, since a 3-seed ensemble already captures
+most of that variance reduction. Snapshot ensembling is therefore worth much
+less on top of a seed ensemble than it is alone.
+
+Still owed: these are the same five folds that ~35 experiments have run
+against. A 6.5-point margin is far harder to attribute to chance than 4.7 was,
+but confirming on a fresh signer partition (`--seed`) remains item 5 of §7.8.
+
+Operational note: results are now written to `<tag>.partial.json` after every
+fold. A 2 h run that wrote nothing until the end lost everything to an
+interruption once, after two folds that held the project's two best scores at
+the time.
 
 ### 7.6 Two metrics, and a reporting error
 

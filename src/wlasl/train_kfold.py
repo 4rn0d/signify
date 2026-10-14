@@ -1204,6 +1204,7 @@ def main():
     scores = []
     histories = []
     out_of_fold = []
+    seed_curves = []
 
     pretrain_x = pretrain_y = None
     if args.pretrain_vocab:
@@ -1331,9 +1332,36 @@ def main():
             "probabilities": np.round(tail_probabilities, 5).tolist(),
         })
 
+        # Precision selon le NOMBRE de graines moyennees, sur la meme fenetre
+        # de 30 epochs que la metrique rapportee. Les rendements de
+        # l ensemble sont decroissants, et c est la seule facon de savoir ou
+        # ils cessent de payer sans lancer un run par valeur.
+        by_seed = []
+        for count in range(1, len(curves) + 1):
+            partial = sum(sum(curves[k][epoch] for k in range(count))
+                          for epoch in window)
+            by_seed.append(round(float((partial.argmax(axis=1) == test_y).mean()), 4))
+        seed_curves.append(by_seed)
+
         final = curve[-1]
         scores.append(final)
         histories.append(curve)
+
+        # Resultat partiel sur le disque des maintenant. Un run de 2 h qui
+        # n ecrit qu a la fin perd tout a la moindre interruption, et le fold
+        # est l unite de travail naturelle : ce qui est fini est garde.
+        partial = RESULTS_PATH.replace(".json", f"{args.tag}.partial.json")
+        tail_so_far = np.array([np.mean(c[-30:]) for c in histories])
+        with open(partial, "w", encoding="utf-8") as handle:
+            json.dump({
+                "folds_done": len(histories),
+                "folds_total": args.folds,
+                "per_fold": [float(x) for x in scores],
+                "per_fold_plateau": [float(x) for x in tail_so_far],
+                "plateau_mean": float(tail_so_far.mean()),
+                "curves": histories,
+                "by_seed_count": seed_curves,
+            }, handle, ensure_ascii=False)
 
         print(f"  fold {fold_index}/{args.folds}  "
               f"train {len(train_x):>4}  test {len(test_x):>4}  "
@@ -1344,6 +1372,14 @@ def main():
     # resultat de l'epoch sur laquelle on tombe (ecart de 2 points mesure).
     tail = np.array([np.mean(c[-30:]) for c in histories])
     print(f"\n{'=' * 60}")
+    if seed_curves and len(seed_curves[0]) > 1:
+        print("  apport de chaque graine (moyenne sur les folds)")
+        columns = np.array(seed_curves)
+        for count in range(columns.shape[1]):
+            gain = (f"  {columns[:, count].mean() - columns[:, count - 1].mean():+.4f}"
+                    if count else "")
+            print(f"    {count + 1} graine(s) {columns[:, count].mean():.4f}{gain}")
+
     print(f"  accuracy (budget fixe, {args.epochs} epochs)")
     print(f"    plateau (30 dernieres) {tail.mean():.4f}  "
           f"ecart-type {tail.std():.4f}   <-- metrique retenue")
@@ -1403,11 +1439,15 @@ def main():
                 "per_fold": [float(s) for s in scores],
                 "curves": histories,
                 "out_of_fold": out_of_fold,
+                "by_seed_count": seed_curves,
                 "classes": glosses,
             },
             handle, ensure_ascii=False, indent=1,
         )
     print(f"\n  resultats : {out_path}")
+    leftover = RESULTS_PATH.replace(".json", f"{args.tag}.partial.json")
+    if os.path.exists(leftover):
+        os.remove(leftover)
 
 
 if __name__ == "__main__":
