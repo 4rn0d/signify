@@ -38,6 +38,7 @@ dependencies:
   camera: ^0.12.1
   camera_macos: ^0.1.1
   camera_windows: ^0.3.0
+  flame_tiled: ^3.1.2
 
 dev_dependencies:
   flutter_test:
@@ -62,8 +63,14 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/Gragas32-Sheet.png
+    - assets/images/Character/Gragas32-Sheet.png
     - assets/asl-signs/
+    - assets/tiles/
+    - assets/images/Character/Character/
+    - assets/images/Character/Slime/
+    - assets/images/Props/
+    - assets/images/Props/Atlas/
+    - assets/images/WallsAndFloors/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

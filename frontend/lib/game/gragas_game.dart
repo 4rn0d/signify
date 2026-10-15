@@ -38,9 +38,7 @@ extension on GragasAnimation {
 
 class GragasGame extends FlameGame {
   GragasGame({GragasAnimation animation = GragasAnimation.idle})
-    : _currentAnimation = animation {
-    images = Images(prefix: 'assets/');
-  }
+    : _currentAnimation = animation;
 
   GragasAnimation _currentAnimation;
   SpriteAnimationGroupComponent<GragasAnimation>? _gragas;
@@ -59,7 +57,7 @@ class GragasGame extends FlameGame {
     await super.onLoad();
 
     final sheet = SpriteSheet(
-      image: await images.load('Gragas32-Sheet.png'),
+      image: await images.load('Character/Gragas32-Sheet.png'),
       srcSize: Vector2.all(48),
     );
     final animations = {

@@ -1,16 +1,23 @@
+import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:frontend/game/menu_game.dart';
 
 import 'pages/home_page.dart';
 
 void main() {
-  runApp(const SignifyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(SignifyApp(game: MenuGame()));
 }
 
 class SignifyApp extends StatelessWidget {
-  const SignifyApp({super.key});
+  const SignifyApp({super.key, this.game});
+
+  final MenuGame? game;
 
   @override
   Widget build(BuildContext context) {
+    final game = this.game;
+
     return MaterialApp(
       title: 'Signify',
       theme: ThemeData(
@@ -22,7 +29,7 @@ class SignifyApp extends StatelessWidget {
         splashFactory: InkRipple.splashFactory,
         useMaterial3: true,
       ),
-      home: const HomePage(),
+      home: game == null ? const HomePage() : GameWidget(game: game),
     );
   }
 }
