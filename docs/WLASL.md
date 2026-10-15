@@ -1070,6 +1070,52 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### Heavy pretraining makes the last fine-tuning epochs worthless, not harmful
+
+Asked while the shipped model was training, from the right observation: if
+pretraining reaches 0.745 on its own task, is the 150-epoch fine-tuning budget
+now excessive? The pretrain sweep answers it without a new run.
+
+What the last 30 fine-tuning epochs earn, by how much pretraining came first:
+
+```
+                  band 121-150 minus 91-120     per fold
+pre0  (none)             +0.0176           +.020 +.021 +.015 +.015 +.017
+pre30                    +0.0121           +.009 +.003 +.027 +.011 +.011
+pre60 (what 0.7413 used) +0.0165           +.012 +.020 +.015 +.018 +.017
+pre120                   +0.0009           -.000 +.003 -.006 -.002 +.009
+```
+
+**At 120 pretraining epochs those 30 epochs contribute nothing** -- +0.09 of a
+point against +1.76, three of five folds slightly negative. The smoothed curve
+reaches 99% of its maximum by epoch ~101 with pre120 against ~126 with none.
+
+But flat is not falling: the final point sits 0.006 below the smoothed peak,
+which is the plateau wobble §7.8 already documented, not decay. So the budget
+is **wasteful, not wrong**, and the waste is small -- fine-tuning is 8 of each
+seed's 38 minutes, so 150 -> 115 would save ~10 minutes across 5 seeds.
+
+Left at 150 deliberately. It is the budget the 0.7413 was measured at, and
+changing it would make the card cite a number for a configuration never
+trained.
+
+Two traps avoided here, both worth naming:
+
+- **training accuracy is not the signal.** The figure printed each epoch comes
+  from the augmented batch inside `fit`, with a fresh random mirror and jitter,
+  so its 0.985 -> 0.958 wobble is noise. Overfitting means training accuracy
+  rising while held-out accuracy falls, which needs a held-out set
+  train_final.py deliberately does not have.
+- **not moving the snapshot window.** The 5 snapshots sit at 121-150, chosen
+  when that was the best band. Under pre120 the best region is nearer 105-135
+  -- but the two bands measure 0.7000 and 0.7009, indistinguishable, so moving
+  the window would optimise noise. Worse, choosing it from held-out curves is
+  exactly the score-based selection snapshots are supposed to avoid.
+
+Where this does cash out is the k-fold: at pretrain 300/120, `--epochs 120` is
+defensible, and there fine-tuning is 1.8 h of the 9, so it saves ~20 real
+minutes. Worth folding into item 3.
+
 ### Sharing the pretraining across seeds: stopped early, decided on judgment
 
 The pretraining dominates the cost. At 5 seeds each fold pretrains five times,
@@ -1222,6 +1268,9 @@ Queued, by value rather than by cost:
    Fold 1 only, and fold 1 is the easiest. A 5-fold
    run at --pretrain-epochs 120, single fine-tuning,
    is ~2 h and settles whether 300 belongs in item 1.
+   Try --epochs 120 there too: at pretrain 120 the
+   last 30 fine-tuning epochs earn +0.0009 (§ above),
+   and cutting them saves ~20 min of the k-fold.
 
 4  ship with 5 seeds, keep measuring with 3            +1.0 expected
 
