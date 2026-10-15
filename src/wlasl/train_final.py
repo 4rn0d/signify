@@ -287,6 +287,11 @@ def main():
                              "drapeau (mesure moins bon que le filtrage dur)")
     parser.add_argument("--pretrain-vocab", type=int, default=300)
     parser.add_argument("--pretrain-epochs", type=int, default=120)
+    parser.add_argument("--gate-pretrain", action="store_true", default=False,
+                        help="filtrer l echafaudage aussi. Defaut NON, parce "
+                             "que train_kfold ne l a jamais fait : l activer "
+                             "rendrait ce modele different de la configuration "
+                             "mesuree, dans une direction non mesuree.")
     parser.add_argument("--pretrain-variants", default="all",
                         choices=("", "all", "dominant", "split"),
                         help="filtrage des variantes de l echafaudage seul. "
@@ -397,9 +402,12 @@ def main():
         wide_index = {g: i for i, g in enumerate(sorted(wide))}
 
         pre_x = np.stack([pad_sequence(r["features"]) for r in extra])
-        if gating:
-            # Le MEME filtrage que la cible : un echafaudage voyant des mains
-            # que l affinage ne voit pas apprendrait une autre distribution.
+        if gating and args.gate_pretrain:
+            # Hors drapeau, l echafaudage voit les features BRUTES. C etait
+            # tentant de le filtrer comme la cible, et je l avais fait : mais
+            # train_kfold ne l a jamais fait, donc le faire ici rendait ce
+            # modele different de celui qu on mesure. Visible dans les
+            # courbes : e120 0.745 filtre contre 0.527 non filtre.
             pre_x = apply_gate(pre_x, extra, "echafaudage")
 
         pretrain = (
@@ -483,6 +491,7 @@ def main():
         "variants": args.variants,
         "pretrain_vocab": args.pretrain_vocab,
         "pretrain_variants": args.pretrain_variants or args.variants,
+        "gate_pretrain": bool(args.gate_pretrain),
         "expected_accuracy": expected,
         "accuracy_note": (
             "expected_accuracy vient de la validation croisee par signeur "

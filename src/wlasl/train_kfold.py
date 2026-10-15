@@ -953,6 +953,13 @@ def main():
                              "la tache changerait silencieusement de taille.")
     parser.add_argument("--variants", default="all",
                         choices=("all", "dominant", "split"))
+    parser.add_argument("--gate-pretrain", action="store_true",
+                        help="appliquer le filtrage des mains a l echafaudage "
+                             "aussi. Non filtre par defaut, parce que c est "
+                             "ainsi que toutes les mesures ont ete faites : "
+                             "filtrer rend la tache d echafaudage bien plus "
+                             "apprenable (e120 0.745 contre 0.527) sans qu on "
+                             "sache ce que cela donne apres affinage.")
     parser.add_argument("--pretrain-variants", default="",
                         choices=("", "all", "dominant", "split"),
                         help="filtrage des variantes pour l echafaudage de "
@@ -1259,6 +1266,23 @@ def main():
         pretrain_x = np.stack([pad_sequence(r["features"]) for r in extra])
         pretrain_y = np.array([wide_index[r["gloss"]] for r in extra], dtype=np.int32)
         pretrain_signers = np.array([r["signer_id"] for r in extra])
+
+        if gating and args.gate_pretrain:
+            # Hors de ce drapeau, l echafaudage voit les features BRUTES,
+            # les deux mains toujours presentes. Toutes les mesures de ce
+            # projet ont ete faites ainsi, y compris le 0.7413 : filtrer ici
+            # serait une autre configuration, pas une correction.
+            pretrain_x = gate_hands(
+                pretrain_x, layout,
+                np.stack([pad_sequence(r["meta"]["hand_scores"]) for r in extra]),
+                np.stack([pad_sequence(r["meta"]["hand_inside"]) for r in extra]),
+                np.stack([
+                    pad_sequence(r["meta"]["hand_conflict"].astype(np.float32)[:, None])[:, 0]
+                    for r in extra]).astype(bool),
+                threshold=args.gate, soft=args.gate_soft,
+                inside_threshold=args.gate_inside,
+                use_conflict=args.gate_conflict)
+            print("echafaudage filtre comme la cible (--gate-pretrain)")
         chosen = args.pretrain_variants or args.variants
         note = "" if chosen == args.variants else f", variantes {chosen}"
         print(f"pre-entrainement : {len(extra)} sequences, "
@@ -1522,6 +1546,7 @@ def main():
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
                 "pretrain_variants": args.pretrain_variants or args.variants,
+                "gate_pretrain": args.gate_pretrain,
                 "pretrain_epochs": args.pretrain_epochs,
                 "shared_pretrain": args.shared_pretrain,
                 "vocab": args.vocab,

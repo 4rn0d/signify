@@ -1074,6 +1074,38 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### The scaffold was being filtered in one script and not the other
+
+Spotted by comparing the two pretraining curves while both were running:
+
+```
+train_final (echafaudage filtre)    e40 0.413   e80 0.648   e120 0.745
+train_kfold (non filtre)            e31 0.171   e61 0.337   e120 0.527
+```
+
+`train_kfold.py` has never gated the pretraining set -- the scaffold sees the
+raw features with both hands always present. When `train_final.py` was written
+to express the measured config, gating was added to its scaffold too, on the
+reasoning that it should see the same distribution as the fine-tuning. The
+reasoning is defensible and was never measured, and it made the shipped model a
+different configuration from the one the k-fold reports.
+
+Gating evidently makes the scaffold's own task far more learnable, +0.22 on its
+120th epoch. That says nothing about the fine-tuning that follows, which is the
+only thing that matters, and the scaffold's own accuracy has never correlated
+with anything -- §7.5i found its *duration* stops mattering by epoch 60 even
+though its accuracy keeps climbing.
+
+Now `--gate-pretrain` in both scripts, **defaulting to off in both**, so the
+shipped model is the measured model. Worth testing, as one flag, alongside item
+3: a scaffold trained on the distribution the fine-tuning actually sees is a
+reasonable thing to want, and the measurement is cheap.
+
+The general lesson, third time in this project: a change that sounds right and
+costs nothing to make still has to be measured before it ships, and the
+dangerous ones are those that touch only one of two scripts that are supposed
+to agree.
+
 ### Heavy pretraining makes the last fine-tuning epochs worthless, not harmful
 
 Asked while the shipped model was training, from the right observation: if
@@ -1275,6 +1307,9 @@ Queued, by value rather than by cost:
    Try --epochs 120 there too: at pretrain 120 the
    last 30 fine-tuning epochs earn +0.0009 (§ above),
    and cutting them saves ~20 min of the k-fold.
+   And --gate-pretrain, one flag, never measured:
+   filtering the scaffold lifts its own accuracy by
+   0.22 but may or may not survive fine-tuning.
 
 4  ship with 5 seeds, keep measuring with 3            +1.0 expected
 
