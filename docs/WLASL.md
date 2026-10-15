@@ -1040,11 +1040,15 @@ MESURE, octobre 2026, projection 48 + echafaudage 300 gloses :
 
   epoch d affinage k-fold   2.92 s  (580 clips + evaluation TTA)
   epoch d affinage expedie  ~3.2 s  (733 clips, pas d evaluation)
-  epoch de pre-entrainement ~15 s   (3428 clips, 300 gloses)
+  epoch de pre-entrainement  ~9 s   (3428 clips, 300 gloses)
   chargement des features    95 s   une fois par run
 
-entrainement final   ~38 min par graine    3 -> 1 h 55, 5 -> 3 h 10, 8 -> 5 h
-k-fold (mesure)      3 graines ~9 h,  5 graines ~15 h
+entrainement final    26 min par graine    3 -> 1 h 20, 5 -> 2 h 10, 8 -> 3 h 30
+k-fold (mesure)      3 graines ~5 h 30,  5 graines ~9 h
+
+Les 26 minutes sont CHRONOMETREES sur le vrai run (graine 1 finie a 20:07,
+graine 2 a 20:33). L epoch de pre-entrainement etait le seul chiffre estime
+plutot que mesure, et il l etait de 67% en trop : ~9 s et non ~15.
 
 Les 13 min par graine citees avant mesure valaient pour l echafaudage a 100
 gloses et 60 epochs. Le pre-entrainement est desormais 4/5 du cout : 30 des
@@ -1093,7 +1097,7 @@ reaches 99% of its maximum by epoch ~101 with pre120 against ~126 with none.
 But flat is not falling: the final point sits 0.006 below the smoothed peak,
 which is the plateau wobble §7.8 already documented, not decay. So the budget
 is **wasteful, not wrong**, and the waste is small -- fine-tuning is 8 of each
-seed's 38 minutes, so 150 -> 115 would save ~10 minutes across 5 seeds.
+seed's 38 minutes, so 150 -> 115 would save ~8 minutes across 5 seeds.
 
 Left at 150 deliberately. It is the budget the 0.7413 was measured at, and
 changing it would make the card cite a number for a configuration never
@@ -1162,7 +1166,7 @@ Sharing would buy speed exactly where accuracy is already fine and cost it
 where it is not. Partial result kept at
 `models/wlasl_kfold_shared60_3folds.json`.
 
-So the cumulative run costs its full price: ~15 h at 5 seeds, ~9 h at 3. The
+So the cumulative run costs its full price: ~9 h at 5 seeds, ~5 h 30 at 3. The
 `--shared-pretrain` flag stays in the harness; if the budget ever binds, the
 test to finish is this one, and only fold 5 is missing.
 
@@ -1248,9 +1252,8 @@ Queued, by value rather than by cost:
    -> 733 target clips) and widen the SCAFFOLD with
    --pretrain-variants all, 3032 -> 3428 clips (same
    300 glosses, measured). Per-seed pretraining, not
-   shared (§ above). ~15 h at 5 seeds, ~9 h at 3 --
-   NOT the ~10/~6 quoted before measuring, which
-   predated tripling the scaffold. Command below.
+   shared (§ above). ~9 h at 5 seeds, ~5 h 30 at 3,
+   on the timed per-seed rate. Command below.
 
 2  REBUILD THE SHIPPED MODEL                           +6.5 available now
    READY TO RUN -- prep done. train_final.py now takes
@@ -1259,7 +1262,8 @@ Queued, by value rather than by cost:
    replays gate_hands from the card and loads all 25
    models. Dry-run clean, 733 clips, 155 dims,
    filtering 80.9% -> 43.2%, scaffold 3428.
-   ~3 h 10 at 5 seeds. The demo still runs ~0.67.
+   ~2 h 10 at 5 seeds (26 min/graine, chronometre).
+   The demo still runs ~0.67.
    Does NOT depend on item 1: the card cites 0.7413
    with the caveat that 300 glosses, 120 epochs and
    5 seeds were never measured together.
