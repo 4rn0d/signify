@@ -1575,10 +1575,30 @@ the time-warp augmentation already stretches.
 
 The 0.0 ms at exactly 30 and 60 is real but misleading: it only happens because
 those rates are multiples of the grid AND the test used perfectly uniform
-timestamps. A live capture jitters and dips, so a cap at 30 would sit exactly
-on the edge where duplicates return. 45 fps keeps the headroom. If heat or
-battery matter, cap at 40 -- a power argument, not an accuracy one. And 60 fps
-would be the exact optimum, not 30.
+timestamps, which no camera produces. Repeating it with a modest +-20% jitter
+on each interval, over 200 simulated recordings:
+
+```
+ cadence moyenne  doublons moyens  pire cas  % avec doublons
+            30                2.4         8              92%
+            36                0.0         0               0%
+            45                0.0         0               0%
+            60                0.0         0               0%
+```
+
+**A cap at 30 would put duplicates in 92% of recordings.** 30 fps is an
+average, not a guarantee: individual intervals vary, and any interval over
+33.3 ms leaves the next grid point without a fresh sample. What has to stay
+under the threshold is the *worst* interval, not the mean, and that is exactly
+what headroom buys. The third of frames resample discards at 45 fps is not
+waste -- it is the selection that keeps every grid point on a fresh frame.
+
+Worth stating plainly because the intuition pulls the other way: the sequence
+the model evaluates **must** be 30 fps, and it always is. That constraint is
+enforced by `resample`, after capture, never by the camera. The model never
+sees a frame rate at all, only 80 feature vectors.
+
+If heat or battery matter, cap at 40 -- a power argument, not an accuracy one.
 
 ## 8. Open items
 
