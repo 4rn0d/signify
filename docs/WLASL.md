@@ -1553,6 +1553,33 @@ Installing it is not small: `tensorrt-cu12` is **3.4 GB** on disk, and
 `site-packages/tensorrt_libs/`, outside the `nvidia/*/bin` sweep -- the same
 silent-fallback trap already documented for CUDA.
 
+**Capture rate: above 30 is free, below it is not.** With `--trt` the loop
+reaches 45 fps, which raised the question of capping it at the dataset's 30.
+Measured, by projecting uniform samples onto the 30 fps grid:
+
+```
+  cadence  frames  apres resample  doublons   erreur de calage  apres pad
+     16        44              81        37           29.2 ms         42
+     24        67              83        16           16.7 ms         64
+     30        84              83         0            0.0 ms         80
+     36       100              83         0           11.1 ms         80
+     45       125              83         0           11.1 ms         80
+     60       168              84         0            0.0 ms         80
+```
+
+**Do not cap at 30.** Below it, nearest-neighbour has to repeat samples -- at
+16 fps, 37 of 81 grid points were duplicates and only 42 distinct frames
+survived padding, so the model saw zero motion where there was some. Above it,
+the only cost is up to 11.1 ms of alignment jitter, far inside the +-20-25%
+the time-warp augmentation already stretches.
+
+The 0.0 ms at exactly 30 and 60 is real but misleading: it only happens because
+those rates are multiples of the grid AND the test used perfectly uniform
+timestamps. A live capture jitters and dips, so a cap at 30 would sit exactly
+on the edge where duplicates return. 45 fps keeps the headroom. If heat or
+battery matter, cap at 40 -- a power argument, not an accuracy one. And 60 fps
+would be the exact optimum, not 30.
+
 ## 8. Open items
 
 **Not tested on a real signer yet, and this is now the binding risk.** Every
