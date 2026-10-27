@@ -953,6 +953,13 @@ def main():
                              "la tache changerait silencieusement de taille.")
     parser.add_argument("--variants", default="all",
                         choices=("all", "dominant", "split"))
+    parser.add_argument("--only-fold", default="",
+                        help="numeros de folds a executer, separes par des "
+                             "virgules, bases sur 1. Sert a reprendre un run "
+                             "interrompu : la partition et les graines sont "
+                             "celles du run complet, donc le resultat se "
+                             "fusionne avec son partiel (merge_kfold.py). "
+                             "--folds et --seed doivent etre inchanges.")
     parser.add_argument("--gate-pretrain", action="store_true",
                         help="appliquer le filtrage des mains a l echafaudage "
                              "aussi. Non filtre par defaut, parce que c est "
@@ -1065,6 +1072,11 @@ def main():
     if args.tip_confidence and not args.confidence:
         parser.error("--tip-confidence s ajoute a --confidence : la regle "
                      "d echange au miroir suppose les deux (queue de 12)")
+
+    only_folds = {int(x) for x in args.only_fold.split(",") if x.strip()}
+    if only_folds and not only_folds <= set(range(1, args.folds + 1)):
+        parser.error(f"--only-fold hors de 1..{args.folds} : "
+                     f"{sorted(only_folds - set(range(1, args.folds + 1)))}")
 
     probes = sorted({int(x) for x in args.pretrain_probe.split(",") if x.strip()})
     if probes:
@@ -1234,7 +1246,9 @@ def main():
     folds, loads = signer_folds(records, args.folds, args.seed)
     print(f"taille des folds (clips) : {loads}\n")
 
-    rng = np.random.default_rng(args.seed)
+    # Le generateur est cree PAR (fold, graine), dans la boucle ci-dessous, et
+    # non ici : un flux unique traversant le run rendait chaque fold dependant
+    # de ceux qui le precedent, et --only-fold irreproductible.
     scores = []
     histories = []
     out_of_fold = []
@@ -1289,6 +1303,12 @@ def main():
               f"{len(wide)} gloses{note}\n")
 
     for fold_index, held in enumerate(folds, start=1):
+        if only_folds and fold_index not in only_folds:
+            # On saute DANS la boucle : enumerate garde donc son index, et
+            # les graines seed + fold_index * 100 + seed_index restent celles
+            # du run complet. Filtrer `folds` en amont renumeroterait tout.
+            continue
+
         test_mask = np.isin(signers, list(held))
         train_mask = ~test_mask
 
@@ -1326,6 +1346,9 @@ def main():
         shared = None
         for seed_index in range(args.seeds):
             tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
+            # Meme convention que la graine TensorFlow ci-dessus, pour que le
+            # fold N soit identique qu il tourne seul ou dans le run complet.
+            rng = np.random.default_rng(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
                                 args.cell, args.label_smoothing, args.project)
 
@@ -1492,6 +1515,8 @@ def main():
         with open(partial, "w", encoding="utf-8") as handle:
             json.dump({
                 "folds_done": len(histories),
+                "folds_run": sorted(only_folds) if only_folds
+                             else list(range(1, len(histories) + 1)),
                 "folds_total": args.folds,
                 "per_fold": [float(x) for x in scores],
                 "per_fold_plateau": [float(x) for x in tail_so_far],
@@ -1530,6 +1555,12 @@ def main():
         json.dump(
             {
                 "folds": args.folds,
+                # A quels folds les scores correspondent. Sans cela, un
+                # resultat --only-fold 5 serait indistinguable d un run a un
+                # seul fold, et se fusionnerait n importe comment.
+                "folds_run": sorted(only_folds) if only_folds
+                             else list(range(1, len(histories) + 1)),
+                "only_fold": args.only_fold,
                 "epochs": args.epochs,
                 "units": args.units,
                 "project": args.project,

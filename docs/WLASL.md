@@ -1074,6 +1074,56 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### Resuming an interrupted run, and the shared RNG it exposed
+
+Two runs have now died mid-flight: one after two folds, which at the time held
+the project's two best scores, and one at the fifth fold of five, killed by a
+Windows restart (Kernel-Power logged a shutdown transition at 02:10 on
+15 October). The `.partial.json` written after every fold saved the results both
+times, but nothing could re-run only the missing folds -- finishing 65 minutes
+of work meant redoing 5 h 30.
+
+`--only-fold 4,5` now runs just those folds, and `merge_kfold.py` reassembles
+the pieces. The skip happens *inside* the fold loop rather than by filtering the
+fold list, because `enumerate` must keep its index: the training seeds are
+`seed + fold_index * 100 + seed_index`, so a filtered list would renumber fold 5
+as fold 1 and train different models than the ones it is meant to complete.
+
+**That was not enough, and the first version of the flag was silently wrong.**
+Verified by running fold 2 both ways:
+
+```
+run complet     [0.034,  0.0136, 0.0136]
+--only-fold 2   [0.0136, 0.0272, 0.0136]
+```
+
+Same partition, same TensorFlow seeds, different models. The cause:
+`rng = np.random.default_rng(args.seed)` was created **once, before the fold
+loop**, so its state ran through the whole run. Fold 2 of a full run inherited a
+stream already advanced by fold 1's thousands of shuffle and augmentation draws,
+while an isolated fold 2 started fresh. The last epoch agreeing at 0.0136 was
+coincidence -- exactly the kind of near-miss that makes a broken thing look
+fine.
+
+The generator is now built per (fold, seed) on the same convention as the
+TensorFlow seed. Fold 2, 4 and 5 then reproduce bit-for-bit, and
+`merge_kfold.py` rebuilds a result identical to the full run's.
+`train_final.py` had always done this correctly, per seed.
+
+**What this changes about every earlier run:** their folds were never
+independent draws -- fold N's augmentation stream depended on how much work
+folds 1..N-1 had done before it. The paired comparisons in this document are
+unaffected, because they pair on *which signers are held out*, and that comes
+from `signer_folds(records, folds, args.seed)`, which never touched this
+generator. A future run is still comparable fold-by-fold with an archived one;
+it simply draws different augmentations, which is noise of the same kind as any
+re-run.
+
+The merge refuses more than it accepts, which is the point: any differing
+configuration key, any fold present in two files, any missing fold. Averaging
+folds from two configurations would produce a number describing no model at all,
+and nothing in the output file would say so.
+
 ### The scaffold was being filtered in one script and not the other
 
 Spotted by comparing the two pretraining curves while both were running:
@@ -1288,7 +1338,7 @@ Queued, by value rather than by cost:
    on the timed per-seed rate. Command below.
 
 2  REBUILD THE SHIPPED MODEL                           +6.5 available now
-   READY TO RUN -- prep done. train_final.py now takes
+   RUNNING since 27 October, ~2 h 10. Prep done. train_final.py now takes
    --project, --handshape-full, --gate*, --vocab-from,
    --pretrain-variants and --snapshots; the demo
    replays gate_hands from the card and loads all 25
@@ -1300,10 +1350,14 @@ Queued, by value rather than by cost:
    with the caveat that 300 glosses, 120 epochs and
    5 seeds were never measured together.
 
-3  confirm --pretrain-vocab 300 on all five folds      +3.3 on ONE fold
-   Fold 1 only, and fold 1 is the easiest. A 5-fold
-   run at --pretrain-epochs 120, single fine-tuning,
-   is ~2 h and settles whether 300 belongs in item 1.
+3  --pretrain-vocab 300 CONFIRMED on 4 of 5 folds     +3.4, t=3.20
+   Folds 1/2/4 gain 4.1/4.4/4.9, fold 3 is flat
+   (+0.25). t=3.20 against a 3.18 threshold at n=4,
+   so it clears significance by a hair. Fold 5 was
+   killed by a Windows restart and deliberately not
+   re-run -- four folds answer the question, and
+   --only-fold 5 is there if the fifth is ever wanted.
+   Mean on those folds 0.7623 against 0.7282.
    Try --epochs 120 there too: at pretrain 120 the
    last 30 fine-tuning epochs earn +0.0009 (§ above),
    and cutting them saves ~20 min of the k-fold.
