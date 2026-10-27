@@ -1074,6 +1074,46 @@ doubling either. Caveat: snapshot members are consecutive epochs of one run
 and therefore correlated, so part of the +2.3 may already be captured by the
 3-seed average.
 
+### The shipped model, 27 October
+
+Built at last, on the configuration this document has been accumulating:
+
+```
+25 modeles       5 graines x 5 instantanes (epochs 121, 128, 136, 143, 150)
+155 dimensions   106 brutes + 23 derivees + 26 configuration de main
+projection 48    289 778 parametres par modele
+filtrage         seuil 0.7, hors-cadre 0.5, arbitrage des conflits
+echafaudage      300 gloses, 3428 clips, 120 epochs, NON filtre
+733 clips        50 gloses, 63 signeurs
+2 h 35           33 min par graine
+```
+
+Card: **0.7623 +- 0.0372, 38x chance**, cited from `wlasl_kfold_best_4folds`
+-- the 4-fold measurement of this exact pretraining setting, not the older
+0.7413 at 100 glosses / 60 epochs. Two things make the real model likely a
+little better than that figure: the missing fold 5 was the easiest of the five
+in the reference run (0.794 against 0.728 across the other four), and the
+measurement used 3 seeds while this ships 5, the ensemble reducing variance in
+the favourable direction.
+
+Verified before trusting it, all three worth keeping as scripts:
+
+- the demo loads all 25 models in 17 s and classifies in 208 ms, which is
+  invisible after a 2.8 s capture;
+- `check_gate_parity.py` -- per-frame gating equals batched gating, 300 clips,
+  21739 frames, 59 conflicts, max difference 0.00e+00;
+- `check_source_parity.py` -- new: stubs out rtmlib so the demo's *model input*
+  can be checked without a camera. Confirms the card switches the extractor to
+  raw mode, the extraction threshold is replayed at 0.7, a low-confidence hand
+  is gated away, the drawn skeleton follows what the model sees, and the vector
+  is bit-identical to the training path.
+
+**What this number still does not answer:** every figure here comes from
+held-out WLASL signers. §7.7 lists five occasions where a conclusion measured
+on clips reversed on a live webcam. The binding risk is unchanged and now
+unavoidable -- the model is built, so the next real information comes from
+pointing a camera at it.
+
 ### Resuming an interrupted run, and the shared RNG it exposed
 
 Two runs have now died mid-flight: one after two folds, which at the time held
@@ -1337,8 +1377,16 @@ Queued, by value rather than by cost:
    shared (§ above). ~9 h at 5 seeds, ~5 h 30 at 3,
    on the timed per-seed rate. Command below.
 
-2  REBUILD THE SHIPPED MODEL                           +6.5 available now
-   RUNNING since 27 October, ~2 h 10. Prep done. train_final.py now takes
+2  SHIPPED MODEL REBUILT, 27 October                  DONE
+   25 models (5 seeds x 5 snapshots at epochs 121,
+   128, 136, 143, 150), 155 dims, projection 48,
+   pretraining 300 glosses / 120 epochs ungated.
+   Card cites 0.7623 +- 0.0372, 38x chance, from the
+   4-fold measurement of this exact pretraining.
+   Took 2 h 35 at 33 min/seed. Demo verified: loads
+   all 25 in 17 s, 208 ms per classification, and
+   check_source_parity.py confirms its model input is
+   bit-identical to the training path. train_final.py now takes
    --project, --handshape-full, --gate*, --vocab-from,
    --pretrain-variants and --snapshots; the demo
    replays gate_hands from the card and loads all 25
@@ -1365,14 +1413,14 @@ Queued, by value rather than by cost:
    filtering the scaffold lifts its own accuracy by
    0.22 but may or may not survive fine-tuning.
 
-4  ship with 5 seeds, keep measuring with 3            +1.0 expected
+4  ship with 5 seeds, keep measuring with 3            DONE (shipped at 5)
 
 5  confirm on FRESH fold seeds (`--seed`)              validity, not points
    ~35 experiments have run against the same 5 folds.
    A 6.5-point margin is far harder to attribute to
    chance than 4.7 was, but the check is still owed.
 
-6  snapshot ensembling, 5 per seed, by position        +0.5, was +2.3
+6  snapshot ensembling, 5 per seed, by position        DONE, +0.5 expected
    DOWNGRADED: measured +0.0053 on top of a 3-seed
    ensemble (§7.5h) against +0.0254 on single-seed runs.
    The seeds already capture that variance reduction.

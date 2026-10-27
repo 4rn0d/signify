@@ -78,11 +78,17 @@ META_PATH = os.path.join(MODELS_DIR, "wlasl_gru.meta.json")
 # la pile complete sans l opposition, et on dit dans la fiche ce qui manque.
 # Citer wlasl_kfold_shape8 (0.5998) serait pire : c est l opposition SANS la
 # pile, donc une sous-estimation d environ 8 points.
-KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_proj_everything.json")
+KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_best_4folds.json")
 KFOLD_CAVEAT = (
-    "mesure a --pretrain-vocab 100 --pretrain-epochs 60 et 3 graines. Ce "
-    "modele utilise 300 gloses, 120 epochs et 5 graines, soit trois "
-    "changements jamais mesures ensemble : attendre un peu mieux, pas moins."
+    "mesure sur 4 des 5 folds, au MEME pre-entrainement que ce modele "
+    "(300 gloses, 120 epochs) mais a 3 graines au lieu de 5. Le fold 5 a ete "
+    "tue par un redemarrage Windows et n a pas ete repris ; c etait le fold "
+    "le plus facile du run de reference (0.794 contre une moyenne de 0.728 "
+    "sur les quatre autres), donc le chiffre a 5 folds serait plutot "
+    "au-dessus. Expedier a 5 graines plutot que 3 va aussi dans ce sens : "
+    "l ensemble reduit la variance, donc le vrai modele est un peu meilleur "
+    "que ce qui est annonce ici. Gain mesure du pre-entrainement elargi : "
+    "+0.0341, t=3.20, 3 folds sur 4."
 )
 
 
