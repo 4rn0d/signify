@@ -1471,6 +1471,88 @@ item 3 tests the first half.
 
 ---
 
+### 7.10 The demo ran at 16 fps, and the detector was the whole reason
+
+Reported from a live session: 46 frames captured in 2.83 s, 16.2 fps, and
+`resample` warning that frames were being repeated -- 46 real frames becoming
+84 on the 30 fps grid, so nearly half the sequence was duplicates. The model
+was trained on ~30 fps clips and the time-warp augmentation only covers
+0.8-1.25x (24-37 fps), so 16 fps sits outside what it was taught to tolerate.
+
+Where the 62 ms per frame went:
+
+```
+boucle complete        ~62 ms   (16.2 fps)
+  detecteur Wholebody    40 ms   dont 93% d inference GPU dans YOLOX-m
+  lecture camera         ~9 ms   recouvrable
+  dessin / affichage     ~13 ms
+25 modeles TF charges   +3.6 ms  negligeable
+filtrage par frame       0.015 ms negligeable
+```
+
+Neither the 25-model ensemble nor the per-frame gating was the problem,
+despite both being new that day. **The person detector was 76% of the cost**,
+re-running YOLOX-m on every frame to locate someone who had barely moved.
+
+**Four fixes rejected by measurement, not by taste.** Each was tested the same
+way: feature differences per frame on six real clips, since what matters is
+what the model sees, in shoulder-width units.
+
+```
+                     gain            derive par rapport a l entrainement
+YOLOX-tiny           52 fps          28.4% des frames > 0.1, 10.1% > 0.5
+reutiliser la boite  ~30 ms/frame    max 2.07 largeurs d epaules
+YOLOX-m @416         -               impossible, entree ONNX figee a 640
+MJPG / 640x480       aucun           la camera negocie deja ca a 30 fps
+```
+
+The box-reuse result is the instructive one: the *mean* difference was 1% of a
+shoulder width, perfectly acceptable, while the maximum was 2.07 -- occasional
+frames where a stale box sends the keypoints somewhere else entirely. A mean
+would have green-lit it.
+
+**Two fixes kept.**
+
+*Threaded camera read.* `cap.read()` blocks until the next frame, so capture
+and detection added up instead of overlapping. Worth **+3 fps** -- not the +9 a
+first benchmark implied, because `read()` only blocks for a full frame interval
+when called back to back, and after 40 ms of detection the camera already has
+one buffered. Zero effect on features. Sample timestamps now come from the
+capture instant rather than from after processing, which also removes a skew
+`resample` was inheriting.
+
+*TensorRT, behind `--trt`, off by default.* Same graph, compiled: the detector
+drops from 24.9 to 11.0 ms (**2.27x**), and Wholebody as a whole from 37.3 to
+24.8 (**1.50x**), which should put the loop near 23 fps. Two obstacles, both
+worth recording:
+
+- TensorRT cannot build YOLOX's TopK ("K exceeds the maximum value allowed
+  (3840)"). Excluded via `trt_op_types_to_exclude`, it stays on CUDA and costs
+  nothing, since the time is in the convolutions.
+- **TF32.** TensorRT enables it by default, which shifts features on 4.44% of
+  frames (max 2.20): box scores move slightly and, where two boxes are close,
+  numpy's NMS stops picking the same one. Disabling it makes the detector
+  faithful (0.25% of frames) -- but `NVIDIA_TF32_OVERRIDE` is **global** and
+  then shifts the pose model, which ran with TF32 during extraction: 4.69% of
+  frames. And building with it off while running with it on is refused by
+  TensorRT itself ("Inconsistent setting of NVIDIA_TF32_OVERRIDE env var at
+  build 0 and at execution -1").
+
+So both routes cost ~4.5% of frames moving more than 0.1 shoulder width
+relative to the training pipeline, mean 0.035, **with no gating decision
+changed across 810 hands**. Six times more faithful than YOLOX-tiny, and still
+not free -- hence a flag that is off until the trade is accepted deliberately.
+
+The clean way out, if the drift matters: re-extract the training features
+through this same TensorRT pipeline (~1.4 h) and retrain the shipped model
+(~2.6 h). Both sides then become identical *and* fast, at the cost of the card
+citing a k-fold run measured on the older features.
+
+Installing it is not small: `tensorrt-cu12` is **3.4 GB** on disk, and
+`gpu_setup.enable_tensorrt_dlls()` was needed because the wheels land in
+`site-packages/tensorrt_libs/`, outside the `nvidia/*/bin` sweep -- the same
+silent-fallback trap already documented for CUDA.
+
 ## 8. Open items
 
 **Not tested on a real signer yet, and this is now the binding risk.** Every

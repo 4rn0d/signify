@@ -38,7 +38,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gpu_setup import enable_cuda_dlls
+from gpu_setup import enable_cuda_dlls, enable_tensorrt_dlls
 
 enable_cuda_dlls()
 
@@ -209,10 +209,12 @@ class Source:
     """
 
     def __init__(self, mode="balanced", with_confidence=True, layout=None,
-                 gate=None):
+                 gate=None, tensorrt=False):
         from rtmlib import Wholebody
 
         self.model = Wholebody(mode=mode, backend="onnxruntime", device="cuda")
+        if tensorrt:
+            use_tensorrt(self.model)
         self.with_confidence = with_confidence
         self.provider = self.model.pose_model.session.get_providers()[0]
         self.layout = layout
@@ -383,6 +385,61 @@ def resample(samples, target_fps=TARGET_FPS):
     return vectors[picked]
 
 
+def use_tensorrt(model):
+    """Remplace la session du DETECTEUR par une session TensorRT.
+
+    Le detecteur pese 40 des 62 ms par frame ; le modele de pose n en prend
+    que 8.4 et reste donc sur CUDA, ce qui a l avantage de le laisser
+    exactement comme a l extraction des features d entrainement.
+
+    Le TopK de YOLOX est exclu : TensorRT ne sait pas le construire au-dela
+    de K=3840. Il retombe sur CUDA, pour un cout negligeable.
+
+    Derive mesuree par rapport au pipeline d entrainement : 4.4% des frames
+    bougent de plus de 0.1 largeur d epaules, moyenne 0.035, aucune decision
+    de filtrage changee sur 810 mains. A comparer a YOLOX-tiny, 28.4%.
+    """
+    import onnxruntime as ort
+
+    directories = enable_tensorrt_dlls()
+    if not directories:
+        print("  TensorRT introuvable (pip install tensorrt-cu12) ; on reste "
+              "sur CUDA")
+        return False
+
+    cache = os.path.join(os.path.expanduser("~"), ".cache", "rtmlib", "trt")
+    os.makedirs(cache, exist_ok=True)
+
+    detector = model.det_model
+    try:
+        session = ort.InferenceSession(detector.onnx_model, providers=[
+            ("TensorrtExecutionProvider", {
+                "trt_engine_cache_enable": True,
+                "trt_engine_cache_path": cache,
+                "trt_timing_cache_enable": True,
+                "trt_fp16_enable": False,
+                # TensorRT echoue sur ce noeud : "K exceeds the maximum value
+                # allowed (3840)". Exclu, il reste sur CUDA.
+                "trt_op_types_to_exclude": "TopK",
+            }),
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ])
+    except Exception as error:
+        print(f"  TensorRT a echoue ({type(error).__name__}) ; on reste sur CUDA")
+        return False
+
+    used = session.get_providers()[0]
+    if used != "TensorrtExecutionProvider":
+        print(f"  TensorRT annonce mais {used} utilise ; on reste sur CUDA")
+        return False
+
+    detector.session = session
+    print("  detecteur sur TensorRT (premiere execution : compilation du "
+          "moteur, ~1 min)")
+    return True
+
+
 class Camera:
     """Webcam lue dans un thread, pour recouvrir la lecture et la detection.
 
@@ -453,12 +510,13 @@ def classify(predict, samples, classes):
     return [(classes[i], float(probabilities[i])) for i in order]
 
 
-def run(camera=0, mode="balanced"):
+def run(camera=0, mode="balanced", tensorrt=False):
     predict, meta, layout, confidence = load_model()
     classes = meta["classes"]
     expected = meta.get("expected_accuracy") or {}
 
     source = Source(mode=mode, with_confidence=confidence, layout=layout,
+                    tensorrt=tensorrt,
                     gate={key: meta.get(key) for key in
                           ("raw_features", "gate", "gate_inside",
                            "gate_conflict", "gate_soft",
@@ -575,8 +633,14 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trt", action="store_true",
+                        help="detecteur sur TensorRT : 2.27x mesure (24.9 -> "
+                             "11.0 ms), au prix de 4.4% des frames deplacees "
+                             "de plus de 0.1 largeur d epaules par rapport au "
+                             "pipeline d entrainement. Aucune decision de "
+                             "filtrage ne change. Inactif par defaut.")
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--mode", default="balanced",
                         choices=("performance", "lightweight", "balanced"))
     args = parser.parse_args()
-    run(args.camera, args.mode)
+    run(args.camera, args.mode, tensorrt=args.trt)

@@ -51,6 +51,42 @@ def enable_cuda_dlls():
     return directories
 
 
+def enable_tensorrt_dlls():
+    """Rend nvinfer_10.dll visible. Retourne les dossiers ajoutes.
+
+    Les roues tensorrt-cu12 n installent PAS sous site-packages/nvidia/ mais
+    dans site-packages/tensorrt_libs/, qu enable_cuda_dlls ne balaie donc pas.
+    Sans cela onnxruntime annonce TensorrtExecutionProvider puis echoue a le
+    charger — le meme piege silencieux que pour CUDA, documente ci-dessus.
+    """
+    import glob
+
+    directories = []
+    roots = list(site.getsitepackages())
+    user_site = site.getusersitepackages()
+    if isinstance(user_site, str):
+        roots.append(user_site)
+
+    for root in roots:
+        for name in ("tensorrt_libs", "tensorrt"):
+            candidate = os.path.join(root, name)
+            if os.path.isdir(candidate) and glob.glob(
+                    os.path.join(candidate, "nvinfer*")):
+                directories.append(candidate)
+
+    if directories:
+        os.environ["PATH"] = (
+            os.pathsep.join(directories) + os.pathsep + os.environ.get("PATH", "")
+        )
+        for directory in directories:
+            try:
+                os.add_dll_directory(directory)
+            except (OSError, AttributeError):
+                pass
+
+    return directories
+
+
 def check():
     """Verifie que CUDA tourne REELLEMENT, pas qu il est annonce.
 
