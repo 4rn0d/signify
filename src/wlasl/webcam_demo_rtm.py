@@ -29,6 +29,7 @@ ressemblent pas (docs/WLASL.md section 7.7).
 import json
 import os
 import sys
+import threading
 import time
 from collections import deque
 
@@ -382,6 +383,68 @@ def resample(samples, target_fps=TARGET_FPS):
     return vectors[picked]
 
 
+class Camera:
+    """Webcam lue dans un thread, pour recouvrir la lecture et la detection.
+
+    cap.read() bloque jusqu a la frame suivante : enchaine avec un detecteur
+    a 40 ms, les deux couts s additionnent (33.8 + 40 = 73.8 ms, soit 13 fps)
+    alors qu ils peuvent se recouvrir. Le thread lit en continu, la boucle
+    prend la derniere frame disponible, et le plafond redevient celui du
+    detecteur seul.
+
+    Aucune feature ne change : c est le meme calcul sur les memes images.
+    """
+
+    def __init__(self, index):
+        self.capture = cv2.VideoCapture(index)
+        self.lock = threading.Lock()
+        self.latest = None          # (numero, horodatage de capture, image)
+        self.count = 0
+        self.running = self.capture.isOpened()
+        self.thread = threading.Thread(target=self._read_forever, daemon=True)
+        if self.running:
+            self.thread.start()
+
+    def opened(self):
+        return self.capture.isOpened()
+
+    def _read_forever(self):
+        while self.running:
+            ok, frame = self.capture.read()
+            if not ok:
+                self.running = False
+                break
+            # L horodatage est pris ICI, a la capture : c est lui que
+            # resample() utilise, et le prendre apres traitement decalerait
+            # chaque echantillon de la duree variable du detecteur.
+            with self.lock:
+                self.count += 1
+                self.latest = (self.count, time.time(), frame)
+
+    def grab(self, after=-1, timeout=2.0):
+        """La premiere frame plus recente que `after`, ou None si la camera meurt.
+
+        Jamais deux fois la meme : traiter une frame deja vue ajouterait un
+        doublon a la sequence, et les doublons sont exactement ce que la
+        cadence basse produisait deja.
+        """
+        deadline = time.time() + timeout
+        while True:
+            with self.lock:
+                latest = self.latest
+            if latest is not None and latest[0] > after:
+                return latest
+            if not self.running or time.time() > deadline:
+                return None
+            time.sleep(0.001)
+
+    def release(self):
+        self.running = False
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        self.capture.release()
+
+
 def classify(predict, samples, classes):
     sequence = resample(samples)
     padded = pad_sequence(np.array(sequence, dtype=np.float32))
@@ -409,8 +472,8 @@ def run(camera=0, mode="balanced"):
     print("ESPACE : enregistrer  |  l : squelette  |  q : quitter")
     print(f"\nSignes connus :\n  {', '.join(classes)}\n")
 
-    capture = cv2.VideoCapture(camera)
-    if not capture.isOpened():
+    capture = Camera(camera)
+    if not capture.opened():
         print("Impossible d ouvrir la webcam.")
         return
 
@@ -422,11 +485,14 @@ def run(camera=0, mode="balanced"):
     results_top = []
     show_skeleton = True
 
+    last_frame = -1
+
     try:
         while True:
-            ok, frame = capture.read()
-            if not ok:
+            got = capture.grab(last_frame)
+            if got is None:
                 break
+            last_frame, captured_at, frame = got
 
             started = time.perf_counter()
             vector, drawable, person = source.process(frame)
@@ -440,7 +506,10 @@ def run(camera=0, mode="balanced"):
                 draw_skeleton(frame, shown, width)
 
             if recording:
-                elapsed = time.time() - started_at
+                # Horodatage de la CAPTURE : resample() se cale dessus, et
+                # celui de la fin du traitement ajouterait a chaque
+                # echantillon la duree variable du detecteur.
+                elapsed = captured_at - started_at
                 sequence.append((elapsed, vector))
                 remaining = max(RECORD_SECONDS - elapsed, 0.0)
 
