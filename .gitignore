@@ -45,3 +45,10 @@ venv/
 #   curl -sSL -o data/wlasl/WLASL_v0.3.json #     https://raw.githubusercontent.com/dxli94/WLASL/master/start_kit/WLASL_v0.3.json
 data/wlasl/
 *.partial.json
+
+# ASL Citizen : 45.9 Go, licence Microsoft Research (recherche non commerciale,
+# redistribution interdite, donnees a detruire en fin de recherche). Ne doit
+# donc JAMAIS entrer dans le depot, meme partiellement. Se retelecharge avec
+#   curl -L -C - -o data/asl_citizen/ASL_Citizen.zip \
+#     https://download.microsoft.com/download/b/8/8/b88c0bae-e6c1-43e1-8726-98cf5af36ca4/ASL_Citizen.zip
+data/asl_citizen/
