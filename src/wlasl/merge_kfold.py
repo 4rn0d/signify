@@ -33,6 +33,9 @@ CONFIG_KEYS = (
     # Un fold WLASL et des folds ASL Citizen partagent toute la configuration
     # ci-dessus ; seul le dossier de features les distingue.
     "features_dir", "selection",
+    # Le GPU et le CPU ne calculent pas les memes nombres : un fold GPU recolle
+    # a des folds CPU donnerait une moyenne de deux experiences differentes.
+    "device",
 )
 
 

@@ -64,6 +64,7 @@ from train_kfold import (
     build_model,
     drop_z_indices,
     gate_hands,
+    compute_device,
     load_sequences,
     pad_sequence,
     top_glosses,
@@ -286,6 +287,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--units", type=int, default=96)
+    parser.add_argument("--deterministic", action="store_true",
+                        help="calcul reproductible au bit pres (GPU) ; sans "
+                             "lui, --only-fold ne reproduit plus un fold "
+                             "interrompu sur GPU")
     parser.add_argument("--cell", default="gru",
                         choices=("gru", "lstm", "stack", "tcn", "stgcn"),
                         help="architecture ; voir build_model dans train_kfold")
@@ -356,6 +361,8 @@ def main():
                              "au prix d etiquettes contradictoires dont "
                              "l echafaudage n a pas besoin.")
     args = parser.parse_args()
+    device = compute_device(args.deterministic)
+    print(f"calcul sur {device}")
 
     gating = bool(args.gate or args.gate_inside or args.gate_conflict)
 
@@ -536,6 +543,7 @@ def main():
             "stgcn": "ensemble de ST-GCN sur les 51 articulations du squelette",
         }[args.cell] + " sur sequences de landmarks",
         "cell": args.cell,
+        "device": device,
         "models": [path for path, _ in saved],
         "snapshot_epochs": [epoch for _, epoch in saved],
         "classes": glosses,

@@ -233,6 +233,23 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
     return [r for r in records if r["variation_id"] == keep[r["gloss"]]]
 
 
+def compute_device(deterministic):
+    """'gpu' ou 'cpu', et le determinisme si demande.
+
+    Le GPU ne calcule pas exactement les memes nombres que le CPU, et par
+    defaut il ne les calcule meme pas deux fois de la meme facon : --only-fold
+    ne reproduirait plus un fold interrompu au bit pres. enable_op_determinism
+    retablit la reproductibilite, a un certain cout en vitesse.
+
+    L appareil est inscrit dans chaque resultat : deux architectures ne se
+    comparent que mesurees sur le meme, et merge_kfold refuse de recoller des
+    folds venus de deux appareils.
+    """
+    if deterministic:
+        tf.config.experimental.enable_op_determinism()
+    return "gpu" if tf.config.list_physical_devices("GPU") else "cpu"
+
+
 def top_glosses(records, n):
     """Les n premieres gloses : par rang ASL-LEX si les clips en portent un.
 
@@ -1238,6 +1255,10 @@ def main():
     parser.add_argument("--velocity", action="store_true",
                         help="ajoute les deltas image-a-image (155 -> 310)")
     parser.add_argument("--tag", default="")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="calcul reproductible au bit pres (GPU) ; sans "
+                             "lui, --only-fold ne reproduit plus un fold "
+                             "interrompu sur GPU")
     parser.add_argument("--cell", default="gru",
                         choices=("gru", "lstm", "stack", "tcn", "stgcn"),
                         help="tcn : convolutions dilatees non causales ; stgcn : "
@@ -1360,6 +1381,9 @@ def main():
                              "a rejetes ; sans cela on mesure aussi ce surplus "
                              "de donnees, pas seulement la qualite des features.")
     args = parser.parse_args()
+    device = compute_device(args.deterministic)
+    print(f"calcul sur {device}"
+          f"{', deterministe' if args.deterministic else ''}")
 
     if args.confidence and args.no_z:
         parser.error("--confidence vient des features RTMPose, --no-z des "
@@ -1874,6 +1898,8 @@ def main():
                 "glosses": len(glosses),
                 "sequences": len(records),
                 "cell": args.cell,
+                "device": device,
+                "deterministic": bool(args.deterministic),
                 "variants": args.variants,
                 "velocity": bool(args.velocity),
                 "no_z": bool(args.no_z),
