@@ -52,3 +52,7 @@ data/wlasl/
 #   curl -L -C - -o data/asl_citizen/ASL_Citizen.zip \
 #     https://download.microsoft.com/download/b/8/8/b88c0bae-e6c1-43e1-8726-98cf5af36ca4/ASL_Citizen.zip
 data/asl_citizen/
+
+# ASL-LEX 2.0 (CC BY-NC 4.0) : frequences d usage des signes, sert a choisir le
+# vocabulaire. Se retelecharge depuis https://osf.io/zpha4/ (signdata.csv).
+data/asl_lex/
