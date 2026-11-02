@@ -1,5 +1,19 @@
 # Enregistrement des 50 signes — consignes pour les signeurs
 
+> **NE PAS UTILISER CES CONSIGNES POUR L INSTANT.**
+>
+> Elles decrivent l ancien vocabulaire : 50 mots, dans les variantes de
+> l ancien jeu de donnees (WLASL). Le projet est passe a un autre jeu de
+> donnees, ASL Citizen, avec un nouveau vocabulaire de 100 signes choisis
+> parmi les plus utilises en ASL. Un enregistrement fait d apres ces
+> consignes ne servirait a rien.
+>
+> De nouvelles consignes, avec la liste des 100 signes et des clips de
+> reference, seront ecrites une fois le premier modele entraine sur ce
+> nouveau vocabulaire. Le texte ci-dessous est conserve pour memoire.
+
+---
+
 Merci de participer. Ces enregistrements servent a apprendre a un modele
 a reconnaitre 50 signes ASL a partir d une webcam.
 

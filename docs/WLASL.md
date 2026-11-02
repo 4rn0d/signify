@@ -6,10 +6,19 @@ pipeline: a sign is defined by movement, often uses two hands, and carries
 meaning in *where* it happens relative to the body — none of which a
 single-frame image classifier represents.
 
-**Current state:** 0.7413 ± 0.0380 on 50 signs, chance 0.0200 — **37× chance**,
+**This phase is closed.** In November the project switched to ASL Citizen
+alone (`ASL_CITIZEN.md`): twice the clips per sign, a complete download, and
+webcam footage. WLASL is no longer used. The pipeline built here carries over
+unchanged; the numbers do not. This notebook remains the record of how that
+pipeline was built and why.
+
+**Final state:** 0.7413 ± 0.0380 on 50 signs, chance 0.0200 — **37× chance**,
 on a signer-disjoint split: RTMPose features at hand threshold 0.7, derived
 scalars, per-hand confidence, the full handshape block, a linear input
-projection, and the full training stack.
+projection, and the full training stack. The shipped model (5 seeds × 5
+snapshots, pretraining on 300 glosses for 120 epochs) cites 0.7623 ± 0.0372 from
+the 4-fold measurement of that pretraining setting, and is still what the demo
+runs until an ASL Citizen model replaces it.
 
 The landmark extractor was then changed to RTMPose (§7), which finds hands in
 84% of frames against MediaPipe's 47%. Compared like for like, without the
@@ -1521,7 +1530,10 @@ one buffered. Zero effect on features. Sample timestamps now come from the
 capture instant rather than from after processing, which also removes a skew
 `resample` was inheriting.
 
-*TensorRT, behind `--trt`, off by default.* Same graph, compiled: the detector
+*TensorRT, behind `--trt`, off by default.* (Since the switch to ASL Citizen the
+demo follows the model card instead: TensorRT when the model was trained on
+TensorRT features, as every ASL Citizen model is. `--trt` and `--no-trt`
+override. See `ASL_CITIZEN.md` §4–5.) Same graph, compiled: the detector
 drops from 24.9 to 11.0 ms (**2.27x**), and Wholebody as a whole from 37.3 to
 24.8 (**1.50x**), which should put the loop near 23 fps. Two obstacles, both
 worth recording:
@@ -1601,6 +1613,12 @@ sees a frame rate at all, only 80 feature vectors.
 If heat or battery matter, cap at 40 -- a power argument, not an accuracy one.
 
 ## 8. Open items
+
+*As of the switch to ASL Citizen, these are no longer this phase's to close. The
+live list is §7 of `ASL_CITIZEN.md`; what follows is kept as the state of
+things when WLASL was set aside. Two items were resolved by the switch itself
+rather than by work: the ~11 clips per class constraint (ASL Citizen has ~30),
+and the recording brief, which now needs rewriting for the new vocabulary.*
 
 **Not tested on a real signer yet, and this is now the binding risk.** Every
 number here comes from held-out *dataset* signers. §7.7 documents five
