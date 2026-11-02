@@ -472,6 +472,18 @@ In rough order of when they block something:
    pretraining transfer lines up layer for layer. The TCN is cheaper to
    measure than the GRU baseline. The ST-GCN is not affordable as is: about
    14 h per fold and seed by extrapolation, ~3 days for a 5-fold on CPU.
+
+   Why a "parallel" architecture is slower: parallel does not mean less work.
+   Counted layer by layer on the real models, multiplications per clip are
+   21 M for the GRU, 22 M for the TCN and **739 M for the ST-GCN (36x)**. Both
+   convolutional models do get through their work faster than the GRU — 2.8x
+   for the TCN, 4.7x for the ST-GCN — because no frame waits for the previous
+   one. But the ST-GCN carries 96 numbers for each of 51 joints (4,896 per
+   frame, against the GRU's 192) and reapplies each temporal weight at every
+   joint and every frame: 36x the work at 4.7x the rate is 7.7x slower.
+   Parameters measure the size of the recipe, multiplications how often it is
+   applied. A dozen CPU cores turn parallelism into 4.7x; a GPU's thousands
+   would turn it into far more.
    Options: slim it further and pretrain 60 epochs; a first signal on one or
    two folds without pretraining; or train on the GPU through WSL2, since
    TensorFlow has no GPU support on native Windows — which would change the
