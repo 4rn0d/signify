@@ -53,7 +53,9 @@ def best_lag(a, b):
     return int(np.argmax(scores)) - MAX_LAG
 
 
-paths = sorted(glob.glob(os.path.join(ROOT, "data", "asl_citizen", "features", "*.npz")))
+paths = sorted([q for q in glob.glob(os.path.join(ROOT, "data", "asl_citizen", "features", "*.npz"))
+     # La cible seulement : l echafaudage s ecrit dans le meme dossier.
+     if int(np.load(q, allow_pickle=True)["rank"]) <= 100])
 clips = []
 for p in paths:
     d = np.load(p, allow_pickle=True)

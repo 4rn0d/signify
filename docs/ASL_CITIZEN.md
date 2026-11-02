@@ -5,8 +5,9 @@ a webcam, rebuilt on a different dataset. The WLASL notebook stays the record
 of how the pipeline was built and why; this one records what changed when the
 data did.
 
-**Current state:** no model trained on ASL Citizen yet. The 100 target signs
-and 300 pretraining signs are being extracted with the demo's exact pipeline.
+**Current state:** no model trained on ASL Citizen yet. The 100 target signs are
+extracted (3,089 clips, no failure, 2.03 s per clip); the 300 pretraining signs
+are being extracted with the demo's exact pipeline.
 The shipped model is still the WLASL one (0.7623 expected on 50 signs), and
 the demo behaves exactly as before until it is replaced.
 
@@ -304,6 +305,12 @@ No ground truth exists for "where the sign is", so four independent checks
 and a contact sheet of eight former misses, where the frame chosen as centre
 shows the hand mid-gesture every time.
 
+Re-run on the **full target set** (3,089 clips, 100 signs) once extracted, with
+the same verdict: misses 12.1% by height against 0.0% by movement; centres
+within 78 ms of the height method at the median (p90 289 ms); a delayed sign
+moves its centre by the delay to within 0.48 frame at the median (max 9.6);
+final centre at 1.35 s for a window midpoint of 1.33 (p10 1.30, p90 1.40).
+
 ### The window
 
 `window_indices` returns the 80 indices the model reads, sign at the centre.
@@ -370,8 +377,27 @@ spread of about 3x. About 10% of pairs also stay at the 1 s search limit,
 probably repeated-movement signs (`YES` nods) where several alignments fit
 equally well; not inspected.
 
-**Decision: tempo is left as is for now** and re-examined once the full target
-set is extracted. If needed, the first candidate is widening time-warp to about
+On the **full target set** (3,089 clips, 100 signs) the picture holds:
+
+```
+                                      ancienne   nouvelle
+decalage residuel, mediane             467 ms     233 ms
+bon voisin, bras seuls                  7.1%      11.9%     (hasard 1.0%)
+distance meme signe / autres            0.96       0.90
+
+coefficient de variation de la duree par signe : mediane 47%, de 27% a 140%
+BED1  1.07 a 3.73 s    DOG1  0.97 a 3.39 s    YES  0.93 a 2.85 s
+le plus regulier : HOLD2  1.10 a 1.80 s,  SCHOOL  1.20 a 2.00 s
+```
+
+The tempo spread is real across all 100 signs: 2x to 3x between signers,
+against a 0.8-1.25x augmentation. What these statistics cannot say is whether
+it costs accuracy — ~20 signers per sign already show the model much of that
+variety. That is a k-fold question: widened time-warp (about 0.6-1.7x) against
+the current one, as one of the first comparisons after the baseline.
+
+**Decision: tempo is left as is for now**, re-examined once the full target
+set was extracted (above), and handed to the k-fold. If needed, the first candidate is widening time-warp to about
 0.6–1.7x, measurable in the k-fold and invisible to the demo. Normalising tempo
 on both sides would also work but erases speed, which is sometimes meaningful
 in ASL.
@@ -382,9 +408,9 @@ in ASL.
 
 In rough order of when they block something:
 
-1. **Re-run the checks at scale.** `check_timebase.py` and
-   `check_consistency.py` on all 3,089 target clips once extracted: confirm the
-   0% misses, and decide on tempo.
+1. ~~Re-run the checks at scale.~~ Done on all 3,089 target clips: 0% misses
+   confirmed; the tempo spread is confirmed too, and whether it matters goes to
+   the k-fold (§6).
 2. ~~Select the vocabulary by ASL-LEX rank in the training harness.~~ Done:
    when clips carry a rank, "the top N" means the N best-ranked (`top_glosses`);
    `--pretrain-vocab 400` gives ranks 1–400, target included, as on WLASL. A
@@ -402,7 +428,19 @@ In rough order of when they block something:
 2b. **Re-measure the hand threshold on ASL Citizen.** Gating at 0.7 keeps 30% of
    hand slots here against 43% on WLASL. Plausible — resting hands are out of
    frame and most signs are one-handed — but 0.7 was tuned on WLASL.
-3. **First k-fold on ASL Citizen.** Signer-disjoint over 52 signers with the
+3. **Architecture.** The WLASL verdicts (LSTM -9.3, 160 units worse) were
+   reached at ~12 training clips per class; there are now ~24, and 3.5x the
+   pretraining data. Candidates, by relevance to the identified bottleneck
+   (handshape at the same location): **ST-GCN**, a graph over the skeleton
+   that can learn hand structure instead of relying on hand-built features —
+   and the pose baseline of the ASL Citizen paper itself (59.5% top-1 over all
+   2,731 signs, against 63.1% for video; a later pose transformer reports
+   75.1%); a **TCN**, likely much faster to train on CPU; a transformer only if
+   capacity is shown to pay. LSTM and state-space models are ruled out (LSTM
+   measured worse; 80 frames is not a long sequence). Next step: build `tcn`
+   and a slim `stgcn` cell and measure parameters and time per epoch against
+   the GRU, before choosing which to run as k-folds.
+3b. **First k-fold on ASL Citizen.** Signer-disjoint over 52 signers with the
    existing harness. The official splits also exist and would allow comparison
    with the published baseline, which covers all 2,731 signs, not 100.
 4. **Clips under 24 fps** (2.6%, P49 alone 1,205 of them) are resampled with

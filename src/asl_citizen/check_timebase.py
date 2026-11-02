@@ -56,7 +56,9 @@ def main():
     parser.add_argument("--sheet", default="")
     args = parser.parse_args()
 
-    paths = sorted(glob.glob(os.path.join(ROOT, "data", "asl_citizen", "features", "*.npz")))
+    paths = sorted([q for q in glob.glob(os.path.join(ROOT, "data", "asl_citizen", "features", "*.npz"))
+     # La cible seulement : l echafaudage s ecrit dans le meme dossier.
+     if int(np.load(q, allow_pickle=True)["rank"]) <= 100])
     clips = load(paths)
     signs = collections.Counter(g for _, g, _, _ in clips)
     print(f"{len(clips)} clips, {len(signs)} signes")
