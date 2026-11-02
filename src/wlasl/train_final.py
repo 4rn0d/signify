@@ -92,6 +92,33 @@ KFOLD_CAVEAT = (
 )
 
 
+def stored_facts(features_dir):
+    """Ce que les clips disent de leur extraction, verifie sur tout le dossier.
+
+    La demo applique ce qui est ecrit dans la fiche : base de temps, duree
+    d enregistrement, detecteur. Ces faits sont LUS dans les clips, pas
+    supposes, et un dossier qui melange deux reponses est refuse — un modele
+    entraine a moitie sur CUDA et a moitie sur TensorRT n aurait pas de bon
+    reglage de demo.
+    """
+    detectors, timed = set(), set()
+    for path in glob.glob(os.path.join(features_dir, "*.npz")):
+        data = np.load(path, allow_pickle=True)
+        detectors.add(str(data["detector"]) if "detector" in data.files else "cuda")
+        timed.add("stamps" in data.files)
+    if len(detectors) > 1 or len(timed) > 1:
+        raise SystemExit(f"{features_dir} melange des extractions : "
+                         f"detecteurs {sorted(detectors)}, horodatages {sorted(timed)}")
+    centred = timed.pop() if timed else False
+    return {
+        "detector": detectors.pop() if detectors else "cuda",
+        "timebase": centred,
+        # 4 s pour laisser a l utilisateur le temps de commencer : la fenetre
+        # de 80 frames est ensuite centree sur son signe, ou qu il tombe.
+        "record_seconds": 4.0 if centred else 2.8,
+    }
+
+
 def extraction_threshold(features_dir):
     """Le seuil avec lequel le dossier a ete extrait, lu dans les npz.
 
@@ -479,6 +506,7 @@ def main():
         # l entree du modele, et non d un reglage de l extraction.
         "raw_features": True,
         "extraction_threshold": extraction_threshold(args.features_dir),
+        **stored_facts(args.features_dir),
         "gate": float(args.gate),
         "gate_inside": float(args.gate_inside),
         "gate_conflict": bool(args.gate_conflict),

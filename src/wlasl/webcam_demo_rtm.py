@@ -57,6 +57,7 @@ from extract_rtmpose import (
 )
 from train_kfold import (MAX_LEN, Layout, add_handshape, add_rich_features,
                          gate_hands, mirror, pad_sequence)
+import timebase
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -370,19 +371,11 @@ def resample(samples, target_fps=TARGET_FPS):
     repetees : la trajectoire est saccadee mais sa DUREE est juste, ce qui
     est le defaut le moins grave des deux.
     """
-    if len(samples) < 2:
-        return np.array([v for _, v in samples], dtype=np.float32)
-
     stamps = np.array([t for t, _ in samples], dtype=np.float64)
     vectors = np.array([v for _, v in samples], dtype=np.float32)
-
-    duration = stamps[-1] - stamps[0]
-    if duration <= 0:
-        return vectors
-
-    grid = np.arange(0.0, duration, 1.0 / target_fps)
-    picked = np.abs(stamps[None, :] - (stamps[0] + grid)[:, None]).argmin(axis=1)
-    return vectors[picked]
+    # La logique vit dans timebase, que l entrainement importe aussi : deux
+    # copies de ce calcul finiraient par diverger.
+    return vectors[timebase.resample_indices(stamps, target_fps)]
 
 
 def use_tensorrt(model):
@@ -502,18 +495,43 @@ class Camera:
         self.capture.release()
 
 
-def classify(predict, samples, classes):
+def model_input(samples, centred=False):
+    """Les 80 frames que le modele lira, a partir de l enregistrement.
+
+    centred : la fiche vient d un modele entraine sur des fenetres centrees
+    sur le signe (timebase). On applique alors la MEME regle a
+    l enregistrement : grille a 30 fps, puis 80 frames autour du mouvement,
+    completees en repetant les bords. Sinon, l ancien comportement : les 80
+    frames du milieu, pour les modeles entraines ainsi.
+    """
     sequence = resample(samples)
-    padded = pad_sequence(np.array(sequence, dtype=np.float32))
+    if centred:
+        return sequence[timebase.window_indices(sequence)]
+    return pad_sequence(np.asarray(sequence, dtype=np.float32))
+
+
+def classify(predict, samples, classes, centred=False):
+    padded = model_input(samples, centred)
     probabilities = predict(padded)
     order = np.argsort(probabilities)[::-1][:TOP_K]
     return [(classes[i], float(probabilities[i])) for i in order]
 
 
-def run(camera=0, mode="balanced", tensorrt=False):
+def run(camera=0, mode="balanced", tensorrt=None):
     predict, meta, layout, confidence = load_model()
     classes = meta["classes"]
     expected = meta.get("expected_accuracy") or {}
+
+    # La fiche dit comment le modele a ete entraine ; la demo s y conforme.
+    # Un modele appris sur des fenetres centrees sur le signe recoit un
+    # enregistrement plus long, dans lequel on centre la fenetre de la meme
+    # facon. Un modele appris sur des features TensorRT doit voir des
+    # features TensorRT : sur CUDA, 4.4% des frames divergent.
+    centred = bool(meta.get("timebase"))
+    record_seconds = float(meta.get("record_seconds", RECORD_SECONDS))
+    trained_on = meta.get("detector", "cuda")
+    if tensorrt is None:
+        tensorrt = trained_on == "tensorrt"
 
     source = Source(mode=mode, with_confidence=confidence, layout=layout,
                     tensorrt=tensorrt,
@@ -524,6 +542,13 @@ def run(camera=0, mode="balanced", tensorrt=False):
     print(f"RTMPose {mode} | {source.provider}")
     if source.provider != "CUDAExecutionProvider":
         print("  ATTENTION : CPU, environ 20x plus lent")
+    detector_now = source.model.det_model.session.get_providers()[0]
+    if trained_on == "tensorrt" and detector_now != "TensorrtExecutionProvider":
+        print("  ATTENTION : modele entraine sur des features TensorRT, mais le "
+              f"detecteur tourne sur {detector_now} : ~4% des frames different "
+              "de l entrainement")
+    print(f"Enregistrement {record_seconds:.1f} s, fenetre "
+          f"{'centree sur le signe' if centred else 'au milieu'}")
     print(f"Modele : {meta['num_classes']} signes, {meta['feature_dim']} dimensions, "
           f"precision attendue {expected.get('mean', '?')} "
           f"(+-{expected.get('std', '?')}, validation croisee par signeur)")
@@ -569,15 +594,15 @@ def run(camera=0, mode="balanced", tensorrt=False):
                 # echantillon la duree variable du detecteur.
                 elapsed = captured_at - started_at
                 sequence.append((elapsed, vector))
-                remaining = max(RECORD_SECONDS - elapsed, 0.0)
+                remaining = max(record_seconds - elapsed, 0.0)
 
-                filled = int(width * min(elapsed / RECORD_SECONDS, 1.0))
+                filled = int(width * min(elapsed / record_seconds, 1.0))
                 cv2.rectangle(frame, (0, 0), (filled, 8), COLOR_REC, -1)
                 cv2.putText(frame, f"ENREGISTREMENT  {remaining:.1f}s",
                             (14, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                             COLOR_REC, 2, cv2.LINE_AA)
 
-                if elapsed >= RECORD_SECONDS:
+                if elapsed >= record_seconds:
                     recording = False
                     if len(sequence) >= 8:
                         captured = len(sequence) / max(elapsed, 1e-6)
@@ -588,7 +613,8 @@ def run(camera=0, mode="balanced", tensorrt=False):
                         if captured < TARGET_FPS * 0.8:
                             print(f"  ATTENTION : cadence basse, des frames "
                                   f"sont repetees")
-                        results_top = classify(predict, sequence, classes)
+                        results_top = classify(predict, sequence, classes,
+                                               centred)
                     else:
                         results_top = []
                     sequence = []
@@ -633,14 +659,16 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--trt", action="store_true",
-                        help="detecteur sur TensorRT : 2.27x mesure (24.9 -> "
-                             "11.0 ms), au prix de 4.4% des frames deplacees "
-                             "de plus de 0.1 largeur d epaules par rapport au "
-                             "pipeline d entrainement. Aucune decision de "
-                             "filtrage ne change. Inactif par defaut.")
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--trt", dest="tensorrt", action="store_true",
+                        default=None,
+                        help="forcer le detecteur TensorRT. Par defaut, la "
+                             "demo suit la fiche : TensorRT si le modele a ete "
+                             "entraine sur des features TensorRT.")
+    choice.add_argument("--no-trt", dest="tensorrt", action="store_false",
+                        help="forcer CUDA.")
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--mode", default="balanced",
                         choices=("performance", "lightweight", "balanced"))
     args = parser.parse_args()
-    run(args.camera, args.mode, tensorrt=args.trt)
+    run(args.camera, args.mode, tensorrt=args.tensorrt)

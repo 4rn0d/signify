@@ -22,6 +22,8 @@ import json
 import os
 
 import numpy as np
+
+import timebase
 import tensorflow as tf
 from tensorflow.keras import layers, models
 
@@ -119,10 +121,25 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
         data = np.load(path, allow_pickle=True)
         video_id = str(data["video_id"])
         meta = None
+
+        # Un clip horodate (ASL Citizen) passe par timebase : grille a 30 fps
+        # puis 80 frames centrees sur le signe, exactement comme la demo
+        # traite un enregistrement. Les memes indices s appliquent a TOUS les
+        # tableaux du clip, sinon confiances et coordonnees se decaleraient.
+        # Le centrage lit les poignets et coudes de POSE, que gate_hands ne
+        # touche pas : le calculer avant ou apres le filtrage revient au meme.
+        take = None
+        if not metadata_only and "stamps" in data.files:
+            grid = timebase.resample_indices(data["stamps"])
+            take = grid[timebase.window_indices(data["features"][grid])]
+
+        def pick(array):
+            return array if take is None else array[take]
+
         if metadata_only:
             vector = None
         else:
-            vector = data["features"].astype(np.float32)
+            vector = pick(data["features"].astype(np.float32))
             if with_tips:
                 if "hand_point_scores" not in data.files:
                     raise ValueError(
@@ -130,7 +147,7 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
                         f"hand_point_scores. --tip-confidence demande une "
                         f"extraction faite avec --raw."
                     )
-                tips = data["hand_point_scores"].astype(np.float32)
+                tips = pick(data["hand_point_scores"].astype(np.float32))
                 # 21 points par main, bouts aux indices 4, 8, 12, 16, 20
                 picked = [t + offset for offset in (0, HAND_POINTS)
                           for t in (4, 8, 12, 16, 20)]
@@ -145,9 +162,9 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
                             f"faite avec --raw."
                         )
                 meta = {
-                    "hand_scores": data["hand_scores"].astype(np.float32),
-                    "hand_inside": data["hand_inside"].astype(np.float32),
-                    "hand_conflict": data["hand_conflict"].astype(bool),
+                    "hand_scores": pick(data["hand_scores"].astype(np.float32)),
+                    "hand_inside": pick(data["hand_inside"].astype(np.float32)),
+                    "hand_conflict": pick(data["hand_conflict"].astype(bool)),
                 }
 
             if with_confidence:
@@ -160,7 +177,7 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
                 # En QUEUE du vecteur : inserees au milieu, elles decaleraient
                 # pose_start et tous les indices codes en dur.
                 vector = np.concatenate(
-                    [vector, data["hand_scores"].astype(np.float32)], axis=1)
+                    [vector, pick(data["hand_scores"].astype(np.float32))], axis=1)
 
         records.append(
             {
