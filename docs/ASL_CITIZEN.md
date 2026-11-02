@@ -437,9 +437,45 @@ In rough order of when they block something:
    2,731 signs, against 63.1% for video; a later pose transformer reports
    75.1%); a **TCN**, likely much faster to train on CPU; a transformer only if
    capacity is shown to pay. LSTM and state-space models are ruled out (LSTM
-   measured worse; 80 frames is not a long sequence). Next step: build `tcn`
-   and a slim `stgcn` cell and measure parameters and time per epoch against
-   the GRU, before choosing which to run as k-folds.
+   measured worse; 80 frames is not a long sequence).
+
+   **Built** as `--cell tcn` and `--cell stgcn`, in `train_kfold` and
+   `train_final`. Both read exactly the GRU's input columns, so gating, mirror,
+   the centred window and TTA are untouched.
+   - *TCN*: projection 48, five residual blocks of two convolutions (kernel 3,
+     96 channels, dilations 1-16), **non-causal** — the literature's TCN only
+     sees the past because it is built for streaming; we classify a whole
+     window, like the bidirectional GRU. Receptive field 125 frames.
+   - *ST-GCN*: the raw columns are regrouped into 51 joints x (x, y, presence,
+     confidence) — 21 per hand in COCO-WholeBody order, 9 pose points, the pose
+     wrists linked to the hand wrists. Five blocks of one graph step (each joint
+     takes in its neighbours along the bones, with a learnable weight per bone)
+     then one temporal step (kernel 9, per joint), residual, time downsampled
+     80 -> 40 -> 20. One neighbourhood partition instead of the original's
+     three. The derived columns (rich, finger curls) go through a small side
+     stream, so running with and without them tells whether the graph learns
+     hand shape by itself.
+
+   `bench_cells.py`, on the 3,089 target clips, one epoch over 80% of them
+   (measured while the pretraining extraction ran, so inflated, but alike for
+   all three):
+
+   ```
+              parametres    s / epoch
+   gru          296 228        10.8
+   tcn          301 124         4.2     2.6x plus rapide
+   stgcn        391 473        82.9     7.7x plus lent
+   ```
+
+   All three save and reload with identical predictions (the ST-GCN's custom
+   layers are registered with Keras, and the demo imports them), and the
+   pretraining transfer lines up layer for layer. The TCN is cheaper to
+   measure than the GRU baseline. The ST-GCN is not affordable as is: about
+   14 h per fold and seed by extrapolation, ~3 days for a 5-fold on CPU.
+   Options: slim it further and pretrain 60 epochs; a first signal on one or
+   two folds without pretraining; or train on the GPU through WSL2, since
+   TensorFlow has no GPU support on native Windows — which would change the
+   cost of every architecture.
 3b. **First k-fold on ASL Citizen.** Signer-disjoint over 52 signers with the
    existing harness. The official splits also exist and would allow comparison
    with the published baseline, which covers all 2,731 signs, not 100.
