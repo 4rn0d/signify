@@ -66,6 +66,7 @@ from train_kfold import (
     gate_hands,
     load_sequences,
     pad_sequence,
+    top_glosses,
 )
 
 
@@ -139,22 +140,29 @@ def extraction_threshold(features_dir):
     return values.pop() if values else None
 
 
-def model_path(seed_index, extractor="rtmpose", snapshot=None):
-    """Un nom par extracteur, par graine et par instantane.
+def dataset_of(features_dir):
+    """'aslc' pour ASL Citizen, 'wlasl' sinon : le prefixe des fichiers."""
+    return "aslc" if "asl_citizen" in os.path.normpath(features_dir) else "wlasl"
 
-    Les deux configurations ecrivaient au MEME chemin, et comme *.keras est
-    ignore par git, entrainer l une ecrasait definitivement les poids de
-    l autre. C est arrive une fois.
+
+def model_path(seed_index, extractor="rtmpose", snapshot=None, dataset="wlasl"):
+    """Un nom par jeu de donnees, par extracteur, par graine et par instantane.
+
+    Les configurations ecrivaient au MEME chemin, et comme *.keras est ignore
+    par git, entrainer l une ecrasait definitivement les poids de l autre.
+    C est arrive une fois entre extracteurs ; sans le prefixe de jeu de
+    donnees, le premier entrainement sur ASL Citizen aurait efface les 25
+    modeles WLASL que la demo sert.
     """
     suffix = "" if extractor == "mediapipe" else f"_{extractor}"
     mark = "" if snapshot is None else f"_k{snapshot}"
     return os.path.join(MODELS_DIR,
-                        f"wlasl_gru{suffix}_s{seed_index}{mark}.keras")
+                        f"{dataset}_gru{suffix}_s{seed_index}{mark}.keras")
 
 
-def meta_path(extractor="rtmpose"):
+def meta_path(extractor="rtmpose", dataset="wlasl"):
     suffix = "" if extractor == "mediapipe" else f"_{extractor}"
-    return os.path.join(MODELS_DIR, f"wlasl_gru{suffix}.meta.json")
+    return os.path.join(MODELS_DIR, f"{dataset}_gru{suffix}.meta.json")
 
 
 def snapshot_epochs(total, count):
@@ -275,18 +283,25 @@ def main():
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--units", type=int, default=96)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--vocab", type=int, default=50)
-    parser.add_argument("--variants", default="dominant")
+    parser.add_argument("--vocab", type=int, default=100,
+                        help="les N premiers signes par rang ASL-LEX (ASL "
+                             "Citizen), ou les N plus fournis (WLASL)")
+    parser.add_argument("--variants", default="all",
+                        help="WLASL seulement : ASL Citizen numerote deja ses "
+                             "variantes (CANDY1, CANDY2), chacune sa classe")
     parser.add_argument("--features-dir",
-                        default=os.path.join(PROJECT_ROOT, "data", "wlasl",
-                                             "features_rtm_all"),
-                        help="dossier de features ; par defaut RTMPose brut")
-    parser.add_argument("--vocab-from",
-                        default=os.path.join(PROJECT_ROOT, "data", "wlasl",
+                        default=os.path.join(PROJECT_ROOT, "data", "asl_citizen",
                                              "features"),
-                        help="dossier dont on reprend les N gloses cibles. "
-                             "features_rtm_all en contient 300 : sans cela "
-                             "les 50 cibles ne seraient pas celles mesurees.")
+                        help="dossier de features ; par defaut ASL Citizen")
+    parser.add_argument("--vocab-from", default=None,
+                        help="dossier dont on reprend les N gloses cibles "
+                             "(WLASL : data/wlasl/features). Inutile pour ASL "
+                             "Citizen, ou le rang est dans chaque clip.")
+    parser.add_argument("--kfold", default=None,
+                        help="resultat k-fold a citer dans la fiche. Refuse "
+                             "s il a ete mesure sur un autre dossier de "
+                             "features. Sans lui, la fiche dit que la "
+                             "precision n est pas encore mesuree.")
     parser.add_argument("--handshape", action="store_true", default=True,
                         help="8 scalaires d opposition du pouce")
     parser.add_argument("--handshape-full", action="store_true", default=True,
@@ -318,7 +333,9 @@ def main():
     parser.add_argument("--gate-soft", action="store_true", default=False,
                         help="garder les coordonnees, ne baisser que le "
                              "drapeau (mesure moins bon que le filtrage dur)")
-    parser.add_argument("--pretrain-vocab", type=int, default=300)
+    parser.add_argument("--pretrain-vocab", type=int, default=400,
+                        help="les N premiers signes, cible comprise : rangs "
+                             "1 a 400 pour ASL Citizen")
     parser.add_argument("--pretrain-epochs", type=int, default=120)
     parser.add_argument("--gate-pretrain", action="store_true", default=False,
                         help="filtrer l echafaudage aussi. Defaut NON, parce "
@@ -343,10 +360,9 @@ def main():
     # presentes ici : sinon on entrainerait sur un autre vocabulaire que
     # celui mesure, sans que rien ne le signale.
     source = args.vocab_from or args.features_dir
-    counts = collections.Counter(
-        r["gloss"] for r in load_sequences(args.variants, source,
-                                           metadata_only=True))
-    target_glosses = {g for g, _ in counts.most_common(args.vocab)}
+    # Par rang ASL-LEX si les clips en portent un, sinon par nombre de clips.
+    target_glosses = top_glosses(
+        load_sequences(args.variants, source, metadata_only=True), args.vocab)
 
     glosses = sorted(target_glosses)
     index = {g: i for i, g in enumerate(glosses)}
@@ -429,8 +445,7 @@ def main():
         extra = load_sequences(chosen, args.features_dir,
                                with_confidence=args.confidence,
                                with_meta=gating)
-        wide_counts = collections.Counter(r["gloss"] for r in extra)
-        wide = {g for g, _ in wide_counts.most_common(args.pretrain_vocab)}
+        wide = top_glosses(extra, args.pretrain_vocab)
         extra = [r for r in extra if r["gloss"] in wide]
         wide_index = {g: i for i, g in enumerate(sorted(wide))}
 
@@ -452,14 +467,20 @@ def main():
               f"variantes {chosen}, {args.pretrain_epochs} epochs")
         print()
 
-    extractor = "rtmpose" if "rtm" in args.features_dir else "mediapipe"
+    # L extracteur se deduisait du nom du dossier ("rtm" dedans) :
+    # data/asl_citizen/features n en contient pas, et le modele aurait ete
+    # etiquete MediaPipe, que la demo RTMPose refuse. Les clips qui portent un
+    # detecteur viennent forcement de RTMPose.
+    dataset = dataset_of(args.features_dir)
+    extractor = ("rtmpose" if "rtm" in args.features_dir or dataset == "aslc"
+                 else "mediapipe")
 
     saved = []
     for seed_index in range(args.seeds):
         print(f"  graine {seed_index + 1}/{args.seeds}")
 
         def keep_snapshot(snapshot_index, model, epoch, _seed=seed_index):
-            path = model_path(_seed, extractor, snapshot_index)
+            path = model_path(_seed, extractor, snapshot_index, dataset)
             model.save(path)
             saved.append((os.path.relpath(path, PROJECT_ROOT), epoch))
 
@@ -467,10 +488,24 @@ def main():
                   len(glosses), args, pretrain, keep_columns, layout,
                   on_snapshot=keep_snapshot)
 
+    # La fiche cite une mesure, et seulement une mesure faite sur les memes
+    # features. Avant ce garde-fou, elle citait TOUJOURS le k-fold WLASL : un
+    # modele ASL Citizen serait parti en annoncant 0.7623, chiffre mesure sur
+    # un autre jeu de donnees.
     expected = None
-    if os.path.exists(KFOLD_PATH):
-        with open(KFOLD_PATH, encoding="utf-8") as handle:
+    kfold_path = args.kfold
+    if kfold_path is None and "wlasl" in os.path.normpath(args.features_dir):
+        kfold_path = KFOLD_PATH
+    if kfold_path and os.path.exists(kfold_path):
+        with open(kfold_path, encoding="utf-8") as handle:
             kfold = json.load(handle)
+        measured_on = kfold.get("features_dir")
+        here = os.path.relpath(args.features_dir, PROJECT_ROOT)
+        if measured_on is not None and os.path.normpath(measured_on) != os.path.normpath(here):
+            raise SystemExit(
+                f"{kfold_path} a ete mesure sur {measured_on}, ce modele est "
+                f"entraine sur {here} : la fiche citerait la precision d un "
+                f"autre modele.")
         # per_fold_plateau, jamais per_fold : le second est la derniere epoch,
         # et confondre les deux a deja produit un resultat de signe faux
         # (section 7.6).
@@ -480,8 +515,8 @@ def main():
             "std": round(float(plateau.std()), 4),
             "folds": kfold["folds"],
             "chance": round(1 / len(glosses), 4),
-            "measured_config": os.path.basename(KFOLD_PATH),
-            "caveat": KFOLD_CAVEAT,
+            "measured_config": os.path.basename(kfold_path),
+            "caveat": KFOLD_CAVEAT if kfold_path == KFOLD_PATH else None,
         }
 
     metadata = {
@@ -535,12 +570,12 @@ def main():
         ),
     }
 
-    with open(meta_path(extractor), "w", encoding="utf-8") as handle:
+    with open(meta_path(extractor, dataset), "w", encoding="utf-8") as handle:
         json.dump(metadata, handle, ensure_ascii=False, indent=2)
 
     print()
     print(f"  {len(saved)} modeles sauvegardes")
-    print(f"  fiche : {meta_path(extractor)}")
+    print(f"  fiche : {meta_path(extractor, dataset)}")
     if expected:
         print(f"  precision attendue (k-fold) : {expected['mean']:.4f} "
               f"+- {expected['std']:.4f}  (hasard {expected['chance']})")

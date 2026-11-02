@@ -385,10 +385,23 @@ In rough order of when they block something:
 1. **Re-run the checks at scale.** `check_timebase.py` and
    `check_consistency.py` on all 3,089 target clips once extracted: confirm the
    0% misses, and decide on tempo.
-2. **Select the vocabulary by ASL-LEX rank in the training harness.** Not built.
-   `train_kfold` and `train_final` pick the target and the scaffold by
-   `most_common` clip count, which is meaningless when every sign has ~30
-   clips. Each extracted clip already stores its `rank`.
+2. ~~Select the vocabulary by ASL-LEX rank in the training harness.~~ Done:
+   when clips carry a rank, "the top N" means the N best-ranked (`top_glosses`);
+   `--pretrain-vocab 400` gives ranks 1–400, target included, as on WLASL. A
+   folder mixing ranked and unranked clips is refused. Wiring it exposed three
+   traps, now closed: `train_final` inferred the extractor from the folder name
+   (`asl_citizen` contains no "rtm", so the model would have been labelled
+   MediaPipe and refused by the demo); its output files had the same names as
+   the shipped WLASL model, which a first ASL Citizen run would have overwritten
+   permanently (now prefixed `aslc_`); and the card always cited the WLASL
+   k-fold, so an ASL Citizen model would have shipped claiming 0.7623. The card
+   now cites only a k-fold measured on the same features (`--kfold`), or says
+   the accuracy is not yet measured. The demo loads the ASL Citizen card as soon
+   as one exists, `--card` to override. Smoke-tested end to end on the first 60
+   signs: rank selection, 80 x 155 input, pretraining, card, demo loading.
+2b. **Re-measure the hand threshold on ASL Citizen.** Gating at 0.7 keeps 30% of
+   hand slots here against 43% on WLASL. Plausible — resting hands are out of
+   frame and most signs are one-handed — but 0.7 was tuned on WLASL.
 3. **First k-fold on ASL Citizen.** Signer-disjoint over 52 signers with the
    existing harness. The official splits also exist and would allow comparison
    with the published baseline, which covers all 2,731 signs, not 100.

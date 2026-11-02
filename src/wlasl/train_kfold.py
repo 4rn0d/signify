@@ -21,9 +21,14 @@ import glob
 import json
 import os
 
+import sys
+
 import numpy as np
 
-import timebase
+# timebase est un voisin de ce fichier ; sous `python -I` le dossier du script
+# n est plus dans le chemin d import, d ou cet ajout explicite.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import timebase  # noqa: E402
 import tensorflow as tf
 from tensorflow.keras import layers, models
 
@@ -33,6 +38,17 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 FEATURES_DIR = os.path.join(PROJECT_ROOT, "data", "wlasl", "features")
 MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", "wlasl", "download_manifest.json")
 RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_kfold.json")
+
+
+def results_path_for(features_dir):
+    """aslc_kfold*.json pour ASL Citizen, wlasl_kfold*.json sinon.
+
+    Le contenu dit deja d ou il vient (features_dir) ; le nom le dit aussi,
+    pour qu un coup d oeil au dossier models/ ne melange pas les deux phases.
+    """
+    if features_dir and "asl_citizen" in os.path.normpath(features_dir):
+        return os.path.join(PROJECT_ROOT, "models", "aslc_kfold.json")
+    return RESULTS_PATH
 
 # Mediane 69 frames, p75 87. 80 couvre la majorite sans trop de remplissage.
 MAX_LEN = 80
@@ -110,11 +126,16 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
     clips ; 'split' la supprime sans rien perdre, au prix de classes plus
     nombreuses et plus petites.
     """
-    with open(MANIFEST_PATH, encoding="utf-8") as handle:
-        variation = {
-            r["video_id"]: r.get("variation_id", 0)
-            for r in json.load(handle)
-        }
+    # Le manifeste WLASL porte les variation_id. ASL Citizen n en a pas besoin
+    # (ses variantes sont des gloses numerotees) et WLASL n est plus utilise :
+    # son absence ne doit pas empecher de charger autre chose.
+    variation = {}
+    if os.path.exists(MANIFEST_PATH):
+        with open(MANIFEST_PATH, encoding="utf-8") as handle:
+            variation = {
+                r["video_id"]: r.get("variation_id", 0)
+                for r in json.load(handle)
+            }
 
     records = []
     for path in sorted(glob.glob(os.path.join(features_dir or FEATURES_DIR, "*.npz"))):
@@ -186,6 +207,9 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
                 "signer_id": int(data["signer_id"]),
                 "video_id": video_id,
                 "variation_id": int(variation.get(video_id, 0)),
+                # Rang de frequence d usage ASL-LEX (ASL Citizen) ; None pour
+                # WLASL, qui n en a pas.
+                "rank": int(data["rank"]) if "rank" in data.files else None,
                 "meta": meta,
             }
         )
@@ -206,6 +230,31 @@ def load_sequences(variants="all", features_dir=None, metadata_only=False,
 
     keep = {g: counts.most_common(1)[0][0] for g, counts in by_gloss.items()}
     return [r for r in records if r["variation_id"] == keep[r["gloss"]]]
+
+
+def top_glosses(records, n):
+    """Les n premieres gloses : par rang ASL-LEX si les clips en portent un.
+
+    WLASL ne portait pas de rang : on prenait les n gloses les plus
+    fournies, ce qui avait un sens quand les comptes allaient de 5 a 40. Dans
+    ASL Citizen chaque signe a ~30 clips, et "les plus fournies" ne veut plus
+    rien dire ; le vocabulaire y est choisi par frequence d usage chez les
+    signeurs sourds (ASL-LEX), et ce rang est stocke dans chaque clip.
+
+    Un ensemble ou certains clips ont un rang et d autres non est refuse :
+    melanger les deux criteres choisirait un vocabulaire que personne n a
+    decide.
+    """
+    ranked = {r["gloss"]: r["rank"] for r in records if r.get("rank") is not None}
+    unranked = {r["gloss"] for r in records if r.get("rank") is None}
+    if ranked and unranked:
+        raise ValueError(
+            f"{len(ranked)} gloses avec un rang ASL-LEX et {len(unranked)} sans : "
+            f"dossiers melanges ?")
+    if ranked:
+        return set(sorted(ranked, key=lambda g: (ranked[g], g))[:n])
+    counts = collections.Counter(r["gloss"] for r in records)
+    return {g for g, _ in counts.most_common(n)}
 
 
 def pad_sequence(sequence, max_len=MAX_LEN):
@@ -1119,11 +1168,11 @@ def main():
     # on restreint aux N cibles pour que la tache reste comparable.
     if args.vocab_from:
         reference = load_sequences(args.variants, args.vocab_from, metadata_only=True)
-        counts = collections.Counter(r["gloss"] for r in reference)
     else:
-        counts = collections.Counter(r["gloss"] for r in records)
+        reference = records
 
-    target = {g for g, _ in counts.most_common(args.vocab)}
+    # Par rang ASL-LEX si les clips en portent un, sinon par nombre de clips.
+    target = top_glosses(reference, args.vocab)
     records = [r for r in records if r["gloss"] in target]
 
     if args.vocab_from:
@@ -1289,8 +1338,9 @@ def main():
         extra = load_sequences(args.pretrain_variants or args.variants,
                                args.features_dir,
                                with_confidence=args.confidence)
-        counts = collections.Counter(r["gloss"] for r in extra)
-        wide = {g for g, _ in counts.most_common(args.pretrain_vocab)}
+        # Les n premiers signes CIBLE COMPRISE, comme pour WLASL : avec ASL
+        # Citizen, --pretrain-vocab 400 donne les rangs 1 a 400.
+        wide = top_glosses(extra, args.pretrain_vocab)
         extra = [r for r in extra if r["gloss"] in wide]
 
         wide_index = {g: i for i, g in enumerate(sorted(wide))}
@@ -1527,7 +1577,7 @@ def main():
         # Resultat partiel sur le disque des maintenant. Un run de 2 h qui
         # n ecrit qu a la fin perd tout a la moindre interruption, et le fold
         # est l unite de travail naturelle : ce qui est fini est garde.
-        partial = RESULTS_PATH.replace(".json", f"{args.tag}.partial.json")
+        partial = results_path_for(args.features_dir).replace(".json", f"{args.tag}.partial.json")
         tail_so_far = np.array([np.mean(c[-30:]) for c in histories])
         with open(partial, "w", encoding="utf-8") as handle:
             json.dump({
@@ -1566,8 +1616,8 @@ def main():
     print(f"    folds   {', '.join(f'{s:.3f}' for s in scores)}")
     print(f"    hasard  {1 / len(glosses):.4f}")
 
-    out_path = (RESULTS_PATH.replace(".json", args.tag + ".json")
-                if args.tag else RESULTS_PATH)
+    base = results_path_for(args.features_dir)
+    out_path = base.replace(".json", args.tag + ".json") if args.tag else base
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(
             {
@@ -1593,6 +1643,13 @@ def main():
                 "tta": bool(args.tta),
                 "seeds": args.seeds,
                 "pretrain_vocab": args.pretrain_vocab,
+                # Sans ces deux champs, un resultat ASL Citizen et un resultat
+                # WLASL se ressembleraient au point d etre cites l un pour
+                # l autre dans une fiche de modele.
+                "features_dir": os.path.relpath(args.features_dir or FEATURES_DIR),
+                "selection": ("rang ASL-LEX" if any(r.get("rank") is not None
+                                                    for r in records)
+                              else "nombre de clips"),
                 "pretrain_variants": args.pretrain_variants or args.variants,
                 "gate_pretrain": args.gate_pretrain,
                 "pretrain_epochs": args.pretrain_epochs,
@@ -1637,7 +1694,7 @@ def main():
             handle, ensure_ascii=False, indent=1,
         )
     print(f"\n  resultats : {out_path}")
-    leftover = RESULTS_PATH.replace(".json", f"{args.tag}.partial.json")
+    leftover = results_path_for(args.features_dir).replace(".json", f"{args.tag}.partial.json")
     if os.path.exists(leftover):
         os.remove(leftover)
 

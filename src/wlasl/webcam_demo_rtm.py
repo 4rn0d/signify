@@ -61,7 +61,11 @@ import timebase
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_gru_rtmpose.meta.json")
+# La fiche ASL Citizen remplace la fiche WLASL des qu elle existe : c est le
+# modele de la phase en cours. --card force l une ou l autre.
+CARDS = [os.path.join(PROJECT_ROOT, "models", "aslc_gru_rtmpose.meta.json"),
+         os.path.join(PROJECT_ROOT, "models", "wlasl_gru_rtmpose.meta.json")]
+META_PATH = next((c for c in CARDS if os.path.exists(c)), CARDS[-1])
 
 RECORD_SECONDS = 2.8
 TOP_K = 5
@@ -659,6 +663,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--card", default=None,
+                        help="fiche de modele a charger ; par defaut celle "
+                             "d ASL Citizen si elle existe, sinon celle de WLASL")
     choice = parser.add_mutually_exclusive_group()
     choice.add_argument("--trt", dest="tensorrt", action="store_true",
                         default=None,
@@ -671,4 +678,7 @@ if __name__ == "__main__":
     parser.add_argument("--mode", default="balanced",
                         choices=("performance", "lightweight", "balanced"))
     args = parser.parse_args()
+    if args.card:
+        META_PATH = args.card
+    print(f"Fiche : {os.path.relpath(META_PATH, PROJECT_ROOT)}")
     run(args.camera, args.mode, tensorrt=args.tensorrt)

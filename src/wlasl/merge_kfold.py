@@ -30,6 +30,9 @@ CONFIG_KEYS = (
     "handshape", "handshape_full", "gate", "gate_inside", "gate_conflict",
     "gate_soft", "interpolate", "smooth", "tip_confidence", "max_per_class",
     "max_train_signers", "hand_dropout",
+    # Un fold WLASL et des folds ASL Citizen partagent toute la configuration
+    # ci-dessus ; seul le dossier de features les distingue.
+    "features_dir", "selection",
 )
 
 
