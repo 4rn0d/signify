@@ -229,13 +229,17 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
                    + (23 if args.rich else 0)
                    + (width if (args.handshape or args.handshape_full) else 0))
 
+    # raw_dim : les colonnes brutes, que le ST-GCN lit comme des articulations.
+    raw_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
     model = build_model(num_classes, args.units, feature_dim,
-                        "gru", args.label_smoothing, args.project)
+                        args.cell, args.label_smoothing, args.project,
+                        raw_dim=raw_dim)
 
     if pretrain is not None:
         pre_x, pre_y, pre_classes = pretrain
         head = build_model(pre_classes, args.units, feature_dim,
-                           "gru", args.label_smoothing, args.project)
+                           args.cell, args.label_smoothing, args.project,
+                           raw_dim=raw_dim)
 
         for index in range(args.pretrain_epochs):
             order = rng.permutation(len(pre_x))
@@ -282,6 +286,9 @@ def main():
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--units", type=int, default=96)
+    parser.add_argument("--cell", default="gru",
+                        choices=("gru", "lstm", "stack", "tcn", "stgcn"),
+                        help="architecture ; voir build_model dans train_kfold")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--vocab", type=int, default=100,
                         help="les N premiers signes par rang ASL-LEX (ASL "
@@ -521,7 +528,14 @@ def main():
 
     metadata = {
         "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "model": "ensemble de GRU bidirectionnels 2 couches sur sequences de landmarks",
+        "model": {
+            "gru": "ensemble de GRU bidirectionnels 2 couches",
+            "lstm": "ensemble de LSTM bidirectionnels 2 couches",
+            "stack": "ensemble GRU puis LSTM bidirectionnels",
+            "tcn": "ensemble de TCN a convolutions dilatees non causales",
+            "stgcn": "ensemble de ST-GCN sur les 51 articulations du squelette",
+        }[args.cell] + " sur sequences de landmarks",
+        "cell": args.cell,
         "models": [path for path, _ in saved],
         "snapshot_epochs": [epoch for _, epoch in saved],
         "classes": glosses,

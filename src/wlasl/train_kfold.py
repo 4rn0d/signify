@@ -30,6 +30,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import timebase  # noqa: E402
 import tensorflow as tf
+import keras
 from tensorflow.keras import layers, models
 
 
@@ -910,15 +911,243 @@ def add_rich_features(batch, layout=None):
     return np.concatenate([batch, extra], axis=-1)
 
 
+# ---------------------------------------------------------------- squelette
+# Le graphe que lit le ST-GCN : 51 articulations. Les 21 points de chaque main
+# dans l ordre COCO-WholeBody (0 poignet ; pouce 1-4 ; index 5-8 ; majeur
+# 9-12 ; annulaire 13-16 ; auriculaire 17-20), main gauche puis droite, puis
+# les 9 points de pose dans l ordre de la disposition brute : nez, epaules,
+# coudes, poignets, hanches (gauche puis droite a chaque fois).
+HAND_JOINTS = 21
+POSE_JOINTS = 9
+SKELETON_JOINTS = 2 * HAND_JOINTS + POSE_JOINTS   # 51
+
+
+def skeleton_edges():
+    """Les os : qui est relie a qui."""
+    hand = [(0, 1), (1, 2), (2, 3), (3, 4)]                      # pouce
+    for base in (5, 9, 13, 17):                                  # 4 doigts
+        hand += [(0, base), (base, base + 1), (base + 1, base + 2),
+                 (base + 2, base + 3)]
+    hand += [(5, 9), (9, 13), (13, 17)]                          # paume
+    edges = []
+    for offset in (0, HAND_JOINTS):
+        edges += [(a + offset, b + offset) for a, b in hand]
+    nose, l_sh, r_sh, l_el, r_el, l_wr, r_wr, l_hip, r_hip = range(
+        2 * HAND_JOINTS, SKELETON_JOINTS)
+    edges += [(nose, l_sh), (nose, r_sh), (l_sh, r_sh), (l_sh, l_el),
+              (l_el, l_wr), (r_sh, r_el), (r_el, r_wr), (l_sh, l_hip),
+              (r_sh, r_hip), (l_hip, r_hip)]
+    # Le lien qui fait UN squelette : le poignet du modele de pose et celui
+    # du modele de main. COCO-WholeBody range la main gauche de la personne
+    # en premier, comme son poignet gauche : meme cote.
+    edges += [(l_wr, 0), (r_wr, HAND_JOINTS)]
+    return edges
+
+
+def skeleton_adjacency():
+    """Adjacence avec boucles, normalisee D^-1/2 (A + I) D^-1/2.
+
+    Une seule partition de voisinage, la ou le ST-GCN original en distingue
+    trois (soi, vers le centre, vers l exterieur) : trois fois moins de
+    parametres de graphe, pour rester dans notre regime de donnees.
+    """
+    a = np.eye(SKELETON_JOINTS, dtype=np.float32)
+    for i, j in skeleton_edges():
+        a[i, j] = a[j, i] = 1.0
+    inv = 1.0 / np.sqrt(a.sum(axis=1))
+    return (a * inv[:, None] * inv[None, :]).astype(np.float32)
+
+
+@keras.saving.register_keras_serializable(package="signify")
+class Columns(layers.Layer):
+    """Colonnes [start, end) du vecteur par frame : sans Lambda, que Keras 3
+    refuse de recharger par defaut."""
+
+    def __init__(self, start, end, **kwargs):
+        super().__init__(**kwargs)
+        self.start, self.end = int(start), int(end)
+
+    def call(self, inputs):
+        return inputs[..., self.start:self.end]
+
+    def get_config(self):
+        return {**super().get_config(), "start": self.start, "end": self.end}
+
+
+@keras.saving.register_keras_serializable(package="signify")
+class SkeletonNodes(layers.Layer):
+    """Vecteur brut par frame -> (frames, 51 articulations, 4 canaux).
+
+    Canaux : x, y, presence, confiance. Les colonnes brutes sont celles de
+    frame_features : main gauche (0-41), main droite (42-83), drapeaux (84,
+    85), pose (86-103), puis les deux confiances de main (104, 105) si
+    elles sont la. Les points de pose sont toujours presents, confiance 1.
+    Le modele recoit donc EXACTEMENT les memes colonnes que le GRU, et tout
+    l amont — filtrage, miroir, fenetre, TTA — reste inchange.
+    """
+
+    def __init__(self, raw_dim, **kwargs):
+        super().__init__(**kwargs)
+        self.raw_dim = int(raw_dim)
+        hands = list(range(0, 4 * HAND_JOINTS, 2))
+        pose = list(range(4 * HAND_JOINTS + 2, 4 * HAND_JOINTS + 2 + 2 * POSE_JOINTS, 2))
+        self.x_index = hands + pose
+        self.y_index = [i + 1 for i in self.x_index]
+        flags = [4 * HAND_JOINTS] * HAND_JOINTS + [4 * HAND_JOINTS + 1] * HAND_JOINTS
+        self.flag_index = flags
+        tail = 4 * HAND_JOINTS + 2 + 2 * POSE_JOINTS            # 104
+        self.conf_index = ([tail] * HAND_JOINTS + [tail + 1] * HAND_JOINTS
+                           if self.raw_dim >= tail + 2 else flags)
+
+    def call(self, inputs):
+        x = tf.gather(inputs, self.x_index, axis=-1)
+        y = tf.gather(inputs, self.y_index, axis=-1)
+        ones = tf.ones_like(x[..., :POSE_JOINTS])
+        presence = tf.concat([tf.gather(inputs, self.flag_index, axis=-1), ones], -1)
+        confidence = tf.concat([tf.gather(inputs, self.conf_index, axis=-1), ones], -1)
+        return tf.stack([x, y, presence, confidence], axis=-1)
+
+    def get_config(self):
+        return {**super().get_config(), "raw_dim": self.raw_dim}
+
+
+@keras.saving.register_keras_serializable(package="signify")
+class GraphConv(layers.Layer):
+    """Un pas dans l ESPACE : chaque articulation melange ses canaux, puis
+    recoit la moyenne de ses voisines le long des os.
+
+    `importance` est un poids appris par paire d articulations, multiplie a
+    l adjacence comme dans le ST-GCN original : le modele peut renforcer un
+    os utile (le bout de l index et sa phalange) et en eteindre un autre.
+    """
+
+    def __init__(self, units, **kwargs):
+        super().__init__(**kwargs)
+        self.units = int(units)
+        self.adjacency = tf.constant(skeleton_adjacency())
+
+    def build(self, input_shape):
+        self.kernel = self.add_weight(name="kernel", shape=(input_shape[-1], self.units),
+                                      initializer="glorot_uniform")
+        self.bias = self.add_weight(name="bias", shape=(self.units,), initializer="zeros")
+        self.importance = self.add_weight(
+            name="importance", shape=(SKELETON_JOINTS, SKELETON_JOINTS),
+            initializer="ones")
+
+    def call(self, inputs):
+        h = tf.einsum("btvc,co->btvo", inputs, self.kernel)
+        h = tf.einsum("btvo,vw->btwo", h, self.adjacency * self.importance)
+        return h + self.bias
+
+    def get_config(self):
+        return {**super().get_config(), "units": self.units}
+
+
+def _classifier(x, num_classes):
+    """La tete commune aux trois architectures : memes couches que le GRU,
+    la couche de sortie EN DERNIER, puisque le transfert du pre-entrainement
+    copie toutes les couches sauf la derniere, dans l ordre."""
+    x = layers.Dense(128, activation="relu", name="head")(x)
+    x = layers.Dropout(0.5, name="head_dropout")(x)
+    return layers.Dense(num_classes, activation="softmax", name="output")(x)
+
+
+def build_tcn(num_classes, units, feature_dim, project):
+    """Convolutions temporelles dilatees, NON causales.
+
+    Le TCN de la litterature est causal (il ne voit que le passe) parce
+    qu il est pense pour le flux continu. On classe une fenetre complete :
+    comme notre GRU bidirectionnel, il voit avant et apres. Dilatations
+    1, 2, 4, 8, 16 et deux convolutions de noyau 3 par bloc : champ
+    recepteur de 125 frames, la fenetre entiere (80).
+
+    Pas de Masking : avec la fenetre centree sur le signe (timebase), les
+    bords sont des frames repetees, jamais des zeros.
+    """
+    inputs = layers.Input(shape=(MAX_LEN, feature_dim))
+    x = inputs
+    if project:
+        x = layers.Dense(project, activation=None, name="projection")(x)
+    for i, dilation in enumerate((1, 2, 4, 8, 16)):
+        residual = x
+        y = layers.Conv1D(units, 3, dilation_rate=dilation, padding="same",
+                          activation="relu", name=f"tcn{i}_a")(x)
+        y = layers.Dropout(0.2, name=f"tcn{i}_drop_a")(y)
+        y = layers.Conv1D(units, 3, dilation_rate=dilation, padding="same",
+                          activation="relu", name=f"tcn{i}_b")(y)
+        y = layers.Dropout(0.2, name=f"tcn{i}_drop_b")(y)
+        if residual.shape[-1] != units:
+            residual = layers.Conv1D(units, 1, name=f"tcn{i}_res")(residual)
+        x = layers.ReLU(name=f"tcn{i}_out")(layers.Add(name=f"tcn{i}_add")([y, residual]))
+    x = layers.GlobalAveragePooling1D(name="pool")(x)
+    return models.Model(inputs, _classifier(x, num_classes), name="tcn")
+
+
+def build_stgcn(num_classes, units, feature_dim, raw_dim):
+    """ST-GCN allege : 5 blocs graphe-puis-temps, ~300-400k parametres.
+
+    Chaque bloc : un pas dans l espace (GraphConv), un pas dans le temps
+    (convolution de noyau 9 sur les frames, articulation par articulation),
+    et un raccourci residuel. Le temps est sous-echantillonne 80 -> 40 -> 20
+    dans deux blocs, comme dans l original, pour tenir sur CPU.
+
+    Les colonnes au-dela des colonnes brutes (scalaires derives, courbures
+    des doigts) passent par un petit flux a part : lancer avec et sans
+    --rich / --handshape-full dit directement si le graphe apprend la forme
+    de la main tout seul.
+    """
+    if raw_dim is None:
+        raise ValueError("stgcn a besoin de raw_dim, le nombre de colonnes brutes")
+    inputs = layers.Input(shape=(MAX_LEN, feature_dim))
+    x = SkeletonNodes(raw_dim, name="skeleton")(inputs)
+    x = layers.BatchNormalization(name="skeleton_bn")(x)
+    plan = [(units // 2, 1), (units // 2, 1), (units, 2), (units, 1), (units, 2)]
+    for i, (channels, stride) in enumerate(plan):
+        residual = x
+        y = GraphConv(channels, name=f"gcn{i}")(x)
+        y = layers.BatchNormalization(name=f"gcn{i}_bn")(y)
+        y = layers.ReLU(name=f"gcn{i}_relu")(y)
+        y = layers.Conv2D(channels, (9, 1), strides=(stride, 1), padding="same",
+                          name=f"gcn{i}_time")(y)
+        y = layers.BatchNormalization(name=f"gcn{i}_time_bn")(y)
+        y = layers.Dropout(0.3, name=f"gcn{i}_drop")(y)
+        if stride != 1 or residual.shape[-1] != channels:
+            residual = layers.Conv2D(channels, 1, strides=(stride, 1),
+                                     name=f"gcn{i}_res")(residual)
+            residual = layers.BatchNormalization(name=f"gcn{i}_res_bn")(residual)
+        x = layers.ReLU(name=f"gcn{i}_out")(layers.Add(name=f"gcn{i}_add")([y, residual]))
+    x = layers.GlobalAveragePooling2D(name="pool")(x)
+    if feature_dim > raw_dim:
+        derived = Columns(raw_dim, feature_dim, name="derived")(inputs)
+        derived = layers.Conv1D(32, 9, padding="same", activation="relu",
+                                name="derived_conv")(derived)
+        derived = layers.GlobalAveragePooling1D(name="derived_pool")(derived)
+        x = layers.Concatenate(name="merge")([x, derived])
+    return models.Model(inputs, _classifier(x, num_classes), name="stgcn")
+
+
 def build_model(num_classes, units=96, feature_dim=155, cell="gru",
-                label_smoothing=0.0, project=0):
-    """cell : 'gru', 'lstm' ou 'stack' (une couche de chaque).
+                label_smoothing=0.0, project=0, raw_dim=None):
+    """cell : 'gru', 'lstm', 'stack' (une couche de chaque), 'tcn' ou 'stgcn'.
 
     GRU et LSTM resolvent le meme probleme (gradients qui s'evanouissent dans
     un RNN) et ne different que par la presence d'un etat de cellule separe.
     Les empiler n'ajoute donc pas d'information : c'est teste ici pour le
     verifier, pas parce qu'on l'attend.
     """
+    loss = (
+        tf.keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+        if label_smoothing > 0
+        else "sparse_categorical_crossentropy"
+    )
+    if cell in ("tcn", "stgcn"):
+        model = (build_tcn(num_classes, units, feature_dim, project)
+                 if cell == "tcn"
+                 else build_stgcn(num_classes, units, feature_dim, raw_dim))
+        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3), loss=loss,
+                      metrics=["accuracy"])
+        return model
+
     if cell == "lstm":
         first = layers.LSTM(units, return_sequences=True, dropout=0.3)
         second = layers.LSTM(units, dropout=0.3)
@@ -1009,7 +1238,10 @@ def main():
     parser.add_argument("--velocity", action="store_true",
                         help="ajoute les deltas image-a-image (155 -> 310)")
     parser.add_argument("--tag", default="")
-    parser.add_argument("--cell", default="gru", choices=("gru", "lstm", "stack"))
+    parser.add_argument("--cell", default="gru",
+                        choices=("gru", "lstm", "stack", "tcn", "stgcn"),
+                        help="tcn : convolutions dilatees non causales ; stgcn : "
+                             "graphe sur les 51 articulations du squelette")
     parser.add_argument("--features-dir", default=None,
                         help="dossier de sequences (defaut : data/wlasl/features)")
     parser.add_argument("--vocab", type=int, default=50,
@@ -1306,6 +1538,12 @@ def main():
         base_dim += 4
 
     feature_dim = base_dim
+
+    # Le ST-GCN lit les colonnes brutes comme des articulations : il lui faut
+    # la disposition brute telle quelle, ni doublee par la velocite, ni
+    # amputee de z.
+    if args.cell == "stgcn" and (args.velocity or keep_columns is not None):
+        parser.error("--cell stgcn est incompatible avec --velocity et --no-z")
     print(f"entree : ({features.shape[1]}, {feature_dim}), "
           f"{args.units} unites {args.cell}, budget {args.epochs} epochs\n")
 
@@ -1417,7 +1655,8 @@ def main():
             # fold N soit identique qu il tourne seul ou dans le run complet.
             rng = np.random.default_rng(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
-                                args.cell, args.label_smoothing, args.project)
+                                args.cell, args.label_smoothing, args.project,
+                                raw_dim=raw_dim)
 
             reuse = args.shared_pretrain and shared is not None
 
@@ -1426,7 +1665,8 @@ def main():
                 # aussi, sinon le modele les aurait vus avant l'affinage.
                 keep = ~np.isin(pretrain_signers, list(held))
                 head = build_model(len(set(pretrain_y)), args.units, feature_dim,
-                                   args.cell, args.label_smoothing, args.project)
+                                   args.cell, args.label_smoothing, args.project,
+                                   raw_dim=raw_dim)
                 snapshots = {}
                 # La boucle tournait sans rien rapporter : impossible de dire
                 # apres coup si 60 epochs suffisaient, si c etait trop, ou si
@@ -1485,7 +1725,7 @@ def main():
                         args.seed + fold_index * 100 + seed_index)
                     fresh = build_model(len(glosses), args.units, feature_dim,
                                         args.cell, args.label_smoothing,
-                                        args.project)
+                                        args.project, raw_dim=raw_dim)
 
                 if pretrain_x is not None:
                     # Tout sauf la couche de sortie, dont le nombre de classes
