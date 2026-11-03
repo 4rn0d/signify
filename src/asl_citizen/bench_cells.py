@@ -30,7 +30,13 @@ sys.path.insert(0, os.path.join(ROOT, "src", "wlasl"))
 import tensorflow as tf  # noqa: E402
 
 from train_kfold import (Layout, add_handshape, add_rich_features,  # noqa: E402
-                         augment_batch, build_model, gate_hands, load_sequences)
+                         augment_batch, build_model, compute_device, gate_hands,
+                         load_sequences)
+
+# --deterministic : le cout de la reproductibilite au bit pres, a mesurer
+# plutot qu a supposer, puisque c est elle qui garde --only-fold exact sur GPU.
+device = compute_device("--deterministic" in sys.argv)
+print(f"calcul sur {device}{', deterministe' if '--deterministic' in sys.argv else ''}")
 
 FEATURES = os.path.join(ROOT, "data", "asl_citizen", "features")
 rng = np.random.default_rng(0)
