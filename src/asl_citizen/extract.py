@@ -151,8 +151,15 @@ def process(model, clip, detector):
     if ratio < MIN_DETECT_RATIO:
         return "no_person", round(ratio, 2)
 
-    np.savez_compressed(
-        out,
+    # Ecriture ATOMIQUE : un processus interrompu en pleine ecriture laissait
+    # un .npz tronque, que la reprise prenait pour un clip fini (elle saute
+    # tout fichier existant) et que le chargement faisait ensuite echouer.
+    # On ecrit a cote, sans l extension .npz que glob ramasserait, puis on
+    # renomme : le fichier final existe entier ou n existe pas.
+    partial = out + ".tmp"
+    with open(partial, "wb") as handle:
+        np.savez_compressed(
+        handle,
         features=np.array(vectors, dtype=np.float32),
         stamps=np.array(stamps, dtype=np.float64),
         hand_scores=np.array(scores, dtype=np.float32),
@@ -171,6 +178,7 @@ def process(model, clip, detector):
         fps=fps,
         detect_ratio=ratio,
     )
+    os.replace(partial, out)
     return "ok", len(vectors)
 
 
@@ -213,6 +221,18 @@ def main():
     parser.add_argument("--ranks", default="1-100",
                         help="rangs de frequence ASL-LEX a extraire, ex. 1-100")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--reverse", action="store_true",
+                        help="traiter les clips en partant de la fin. Un second "
+                             "processus en sens inverse double le debit sans "
+                             "interrompre le premier : chacun saute ce que "
+                             "l autre a deja ecrit, et ils se rejoignent.")
+    parser.add_argument("--shard", default="0/1",
+                        help="i/n : ne traiter qu un clip sur n, a partir du "
+                             "i-eme. Plusieurs processus en parallele, chacun "
+                             "son i, occupent le GPU que l extraction seule "
+                             "laisse a moitie inactif entre deux frames. Le "
+                             "calcul par frame ne change pas : les features "
+                             "sont identiques.")
     parser.add_argument("--no-trt", action="store_true",
                         help="detecteur sur CUDA ; la demo devra alors tourner "
                              "SANS --trt pour rester identique")
@@ -220,15 +240,27 @@ def main():
 
     os.makedirs(FEATURES_DIR, exist_ok=True)
     clips = load_clips(*parse_ranks(args.ranks))
+    shard, shards = (int(x) for x in args.shard.split("/"))
+    # Un sur n dans l ordre des rangs : chaque processus avance lui aussi des
+    # signes les mieux classes vers les moins bien classes.
+    clips = clips[shard::shards]
+    if args.reverse:
+        clips = clips[::-1]
     if args.limit:
         clips = clips[:args.limit]
+    # Un rapport par processus : plusieurs processus reecrivant le meme
+    # fichier s effaceraient l un l autre.
+    report_path = (REPORT if shards == 1
+                   else REPORT.replace(".json", f"_shard{shard}of{shards}.json"))
+    if args.reverse:
+        report_path = report_path.replace(".json", "_reverse.json")
 
     model, detector = build_model(tensorrt=not args.no_trt)
     print(f"{len(clips)} clips, rangs {args.ranks}, detecteur {detector}", flush=True)
 
     report = {}
-    if os.path.exists(REPORT):
-        with open(REPORT, encoding="utf-8") as handle:
+    if os.path.exists(report_path):
+        with open(report_path, encoding="utf-8") as handle:
             report = json.load(handle)
 
     started = time.time()
@@ -244,7 +276,7 @@ def main():
             left = rate * sum(1 for c in clips[position:])
             print(f"  {position}/{len(clips)}  {done} extraits  "
                   f"{rate:.2f} s/clip  reste ~{left / 60:.0f} min", flush=True)
-            with open(REPORT, "w", encoding="utf-8") as handle:
+            with open(report_path, "w", encoding="utf-8") as handle:
                 json.dump(report, handle)
 
     counts = {}
