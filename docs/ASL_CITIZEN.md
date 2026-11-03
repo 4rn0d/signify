@@ -488,6 +488,39 @@ In rough order of when they block something:
    two folds without pretraining; or train on the GPU through WSL2, since
    TensorFlow has no GPU support on native Windows — which would change the
    cost of every architecture.
+3a. **Queued until the baseline exists — decided, not to start before.** Four
+   improvements, in the order they should be tried, each to be measured against
+   the GRU baseline on the same folds:
+   1. **Phonology as auxiliary targets.** Besides the sign, the model predicts
+      its components from ASL-LEX — handshape (30 values among the 100 target
+      signs), selected fingers (9), flexion (7), major location (5), movement
+      (5), one or two hands (5) — all filled for 100/100 target signs (flexion
+      94/100) and available for the whole scaffold. Extra output heads used in
+      training only. It targets the measured weakness directly (confused pairs
+      differ by handshape at the same location), and the components are shared
+      across signs: `open_b` alone covers 13 of the 100, so its head learns from
+      13x the examples of any single sign. No new data; works with any
+      architecture. The ASL-LEX team reported gains on WLASL with this
+      (Kezar, Thomason & Sehyr, *Improving Sign Recognition with Phonology*,
+      2023) — cited from memory, to check before relying on it.
+   2. **Ensemble across architectures and input streams.** Seeds of one model
+      make similar mistakes, which is why 3 -> 5 seeds bought only ~+1 point.
+      GRU, TCN and ST-GCN see the data differently. The standard skeleton
+      recipe adds streams: one model on joints, one on bones (the vector between
+      two connected joints), one on motion, votes averaged. Not the same as the
+      WLASL velocity test (-1.4), which added columns to a single model.
+   3. **Learned graph connections for the ST-GCN.** Bones only link neighbours,
+      but handshapes such as F or O hinge on the thumb tip touching the index
+      tip, which the skeleton does not connect. An adaptive graph learns such
+      edges. A refinement for after the first ST-GCN result.
+   4. **Pretraining on all of ASL Citizen** (2,731 signs, 83,399 clips, against
+      400 signs). Breadth is the one lever that clearly paid (+3.4). About a day
+      and a half of extraction with two processes on the GPU.
+
+   Not pursued: self-supervised masked-pose pretraining (meant for scarce
+   labels; there are 83,000 labelled clips), and what was already tested or set
+   aside — face, 3D, a dedicated hand model.
+
 3b. **First k-fold on ASL Citizen.** Signer-disjoint over 52 signers with the
    existing harness. The official splits also exist and would allow comparison
    with the published baseline, which covers all 2,731 signs, not 100.
