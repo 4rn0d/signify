@@ -15,7 +15,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, "src/wlasl")
+sys.path.insert(0, "src/core")
 from train_kfold import Layout, gate_hands, pad_sequence
 
 GATE = dict(threshold=0.7, soft=False, inside_threshold=0.5, use_conflict=True)

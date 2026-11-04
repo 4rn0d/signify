@@ -18,7 +18,7 @@ val_accuracy **0.9277**, works with either hand, runs at ~34 fps.
 
 ## 1. Training was broken
 
-Three bugs in `src/data_loader.py`. The first stopped training outright; the
+Three bugs in `src/alphabet/data_loader.py`. The first stopped training outright; the
 other two would have wasted the run silently.
 
 ### 1.1 Mismatched label formats — hard crash
@@ -223,7 +223,7 @@ shipped **0.7872** instead of **0.8357**.
 ## 6. Landmarks beat the CNN
 
 MediaPipe already computes 21 hand landmarks to find the crop box, then
-discards them. `src/landmark_extractor.py` extracts them for the dataset
+discards them. `src/alphabet/landmark_extractor.py` extracts them for the dataset
 (8 worker processes):
 
 ```
@@ -425,7 +425,7 @@ Modele : FUSION image+landmarks | val_accuracy=0.9277 | 2026-10-01T20:06:48-04:0
 See `models/README.md` for the full map. Superseded models live in
 `models/archive/` with sidecars explaining what each one got wrong.
 
-> **Note on `models/comparison.json`:** the `fusion` entry (0.9277) was
+> **Note on `models/alphabet/comparison.json`:** the `fusion` entry (0.9277) was
 > overwritten by the mirror-augmented rerun, while `cnn` and `landmark` are
 > from the original non-augmented comparison. The clean three-way comparison
 > is the table in section 6 (fusion 0.9373). Do not read those three JSON

@@ -74,13 +74,13 @@ from train_kfold import (
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-META_PATH = os.path.join(MODELS_DIR, "wlasl_gru.meta.json")
+META_PATH = os.path.join(MODELS_DIR, "wlasl", "wlasl_gru.meta.json")
 # La configuration exacte de ce script — pile complete ET opposition du pouce
 # — n a jamais ete mesuree en k-fold. On cite donc la mesure la PLUS PROCHE,
 # la pile complete sans l opposition, et on dit dans la fiche ce qui manque.
 # Citer wlasl_kfold_shape8 (0.5998) serait pire : c est l opposition SANS la
 # pile, donc une sous-estimation d environ 8 points.
-KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl_kfold_best_4folds.json")
+KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl", "wlasl_kfold_best_4folds.json")
 KFOLD_CAVEAT = (
     "mesure sur 4 des 5 folds, au MEME pre-entrainement que ce modele "
     "(300 gloses, 120 epochs) mais a 3 graines au lieu de 5. Le fold 5 a ete "
@@ -157,13 +157,19 @@ def model_path(seed_index, extractor="rtmpose", snapshot=None, dataset="wlasl"):
     """
     suffix = "" if extractor == "mediapipe" else f"_{extractor}"
     mark = "" if snapshot is None else f"_k{snapshot}"
-    return os.path.join(MODELS_DIR,
+    return os.path.join(dataset_dir(dataset),
                         f"{dataset}_gru{suffix}_s{seed_index}{mark}.keras")
 
 
 def meta_path(extractor="rtmpose", dataset="wlasl"):
     suffix = "" if extractor == "mediapipe" else f"_{extractor}"
-    return os.path.join(MODELS_DIR, f"{dataset}_gru{suffix}.meta.json")
+    return os.path.join(dataset_dir(dataset), f"{dataset}_gru{suffix}.meta.json")
+
+
+def dataset_dir(dataset):
+    """ASL Citizen, la phase en cours, a la racine de models/ ; WLASL, close,
+    dans models/wlasl/ avec ses resultats."""
+    return MODELS_DIR if dataset == "aslc" else os.path.join(MODELS_DIR, "wlasl")
 
 
 def snapshot_epochs(total, count):

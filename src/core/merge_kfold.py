@@ -1,8 +1,8 @@
 """Recolle les resultats d un run k-fold interrompu puis reprise avec --only-fold.
 
-    python src/wlasl/merge_kfold.py models/wlasl_kfold_best.partial.json \
-                                   models/wlasl_kfold_fold5.json \
-                                   --out models/wlasl_kfold_best.json
+    python src/core/merge_kfold.py models/wlasl/wlasl_kfold_best.partial.json \
+                                   models/wlasl/wlasl_kfold_fold5.json \
+                                   --out models/wlasl/wlasl_kfold_best.json
 
 Deux runs de ce projet sont morts en cours, le second tue par un redemarrage
 Windows au cinquieme fold sur cinq. --only-fold permet de ne refaire que les

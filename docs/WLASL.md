@@ -1295,7 +1295,7 @@ when it is hard — and the hard case is the
 one that matters, since the live demo on new signers is harder than any fold.
 Sharing would buy speed exactly where accuracy is already fine and cost it
 where it is not. Partial result kept at
-`models/wlasl_kfold_shared60_3folds.json`.
+`models/wlasl/wlasl_kfold_shared60_3folds.json`.
 
 So the cumulative run costs its full price: ~9 h at 5 seeds, ~5 h 30 at 3. The
 `--shared-pretrain` flag stays in the harness; if the budget ever binds, the
@@ -1444,7 +1444,7 @@ Queued, by value rather than by cost:
 Item 1 as a command, every flag deliberate and none inherited by accident:
 
 ```
-python src/wlasl/train_kfold.py --folds 5 --epochs 150 --vocab 50 \
+python src/core/train_kfold.py --folds 5 --epochs 150 --vocab 50 \
   --variants dominant --features-dir data/wlasl/features_rtm_all \
   --rich --confidence --handshape-full \
   --gate 0.7 --gate-inside 0.5 --gate-conflict \
@@ -1457,19 +1457,19 @@ python src/wlasl/train_kfold.py --folds 5 --epochs 150 --vocab 50 \
 every earlier experiment, so the number stays comparable; `--clips-from` is
 deliberately absent, which is what returns those 7 clips. `--seeds 3` measures;
 the shipped model uses 5 (item 4). Pair the result against
-`models/wlasl_kfold_proj_everything.json`'s `per_fold_plateau`, never against
+`models/wlasl/wlasl_kfold_proj_everything.json`'s `per_fold_plateau`, never against
 `per_fold` — §7.6 is the record of getting that wrong.
 
 Item 2 as a command -- every default already matches the measured config,
 so the bare call is the right one:
 
 ```
-python src/wlasl/train_final.py
+python src/core/train_final.py
 ```
 
 It writes 25 models (5 seeds x 5 snapshots at epochs 121, 128, 136, 143, 150)
-plus `models/wlasl_gru_rtmpose.meta.json`. The previous shipped model is kept
-at `models/archive/before_best/`, because `*.keras` is gitignored and
+plus `models/wlasl/wlasl_gru_rtmpose.meta.json`. The previous shipped model is kept
+at `models/wlasl/archive/before_best/`, because `*.keras` is gitignored and
 overwriting it would be permanent -- which has happened once.
 
 Guess on record for item 3, so it can be wrong: pretraining *breadth*

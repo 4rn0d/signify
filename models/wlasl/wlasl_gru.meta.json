@@ -2,9 +2,9 @@
   "created": "2026-10-08T16:10:55-04:00",
   "model": "ensemble de GRU bidirectionnels 2 couches sur sequences de landmarks",
   "models": [
-    "models\\wlasl_gru_s0.keras",
-    "models\\wlasl_gru_s1.keras",
-    "models\\wlasl_gru_s2.keras"
+    "models/wlasl/wlasl_gru_s0.keras",
+    "models/wlasl/wlasl_gru_s1.keras",
+    "models/wlasl/wlasl_gru_s2.keras"
   ],
   "classes": [
     "apple",

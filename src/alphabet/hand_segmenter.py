@@ -13,8 +13,8 @@ MODEL_URL = (
 
 MODEL_PATH = os.path.join(
     os.path.dirname(__file__),
-    "..",
-    "models",
+    "..", "..",
+    "models", "alphabet",
     "hand_landmarker.task",
 )
 

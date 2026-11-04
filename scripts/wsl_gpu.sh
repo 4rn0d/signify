@@ -8,7 +8,7 @@
 # des deux cotes : 2.21.0 et 3.15.1).
 #
 # Depuis Windows, a la racine du depot :
-#   wsl -d Ubuntu-24.04 -- bash scripts/wsl_gpu.sh src/wlasl/train_kfold.py --cell stgcn ...
+#   wsl -d Ubuntu-24.04 -- bash scripts/wsl_gpu.sh src/core/train_kfold.py --cell stgcn ...
 #
 # Environnement : ~/venvs/signify-gpu dans WSL, cree par
 #   python3 -m venv ~/venvs/signify-gpu

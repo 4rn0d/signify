@@ -13,10 +13,13 @@ declenche plus rien, les mains effacees n etant plus annoncees presentes.
 import argparse
 import glob
 import os
+import sys
 
 import numpy as np
 
-from hand_identity import resolve_batch
+# hand_identity est dans src/core, partage avec l extraction RTMPose.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core"))
+from hand_identity import resolve_batch  # noqa: E402
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

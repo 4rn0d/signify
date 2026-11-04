@@ -26,7 +26,7 @@ from model_fusion import build_fusion_model
 from model_landmark import build_landmark_model
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DATA_DIR = os.path.join(
     PROJECT_ROOT, "data", "processed", "asl_alphabet_segmented"
@@ -34,10 +34,10 @@ DATA_DIR = os.path.join(
 
 LANDMARKS_CSV = os.path.join(PROJECT_ROOT, "data", "landmarks", "landmarks.csv")
 
-RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "comparison.json")
+RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "alphabet", "comparison.json")
 
-FUSION_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "sign_model_fusion.keras")
-FUSION_META_PATH = os.path.join(PROJECT_ROOT, "models", "sign_model_fusion.meta.json")
+FUSION_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "alphabet", "sign_model_fusion.keras")
+FUSION_META_PATH = os.path.join(PROJECT_ROOT, "models", "alphabet", "sign_model_fusion.meta.json")
 
 EPOCHS = 40
 PATIENCE = 5

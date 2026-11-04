@@ -29,7 +29,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 WLASL_DIR = os.path.join(PROJECT_ROOT, "data", "wlasl")
 MANIFEST_PATH = os.path.join(WLASL_DIR, "download_manifest.json")
 FEATURES_DIR = os.path.join(WLASL_DIR, "features_rtm07")
-META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_gru_rtmpose.meta.json")
+META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl", "wlasl_gru_rtmpose.meta.json")
 OUTPUT_DIR = os.path.join(WLASL_DIR, "reference")
 
 PADDING_SECONDS = 0.4          # un peu avant et apres, pour voir l amorce

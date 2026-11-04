@@ -1,6 +1,6 @@
 """Le GPU calcule-t-il vraiment, et de facon reproductible ?
 
-A lancer dans WSL :  bash scripts/wsl_gpu.sh src/wlasl/check_gpu.py
+A lancer dans WSL :  bash scripts/wsl_gpu.sh src/core/check_gpu.py
 
 1. TensorFlow ne se contente pas de LISTER le GPU : un calcul y est place et
    son resultat est juste. Le 30 octobre, onnxruntime listait CUDA et

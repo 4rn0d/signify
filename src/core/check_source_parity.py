@@ -16,7 +16,7 @@ import types
 
 import numpy as np
 
-sys.path.insert(0, "src/wlasl")
+sys.path.insert(0, "src/core")
 
 # --- faux detecteur, installe AVANT que Source ne l importe ---
 fake = types.ModuleType("rtmlib")
@@ -53,7 +53,7 @@ scores[extract_rtmpose.RIGHT_HAND] = rng.uniform(0.1, 0.4, size=21)  # douteuse
 
 FRAMES = {"keypoints": [points], "scores": [scores]}
 
-meta = json.load(open("models/wlasl_gru_rtmpose.meta.json", encoding="utf-8"))
+meta = json.load(open("models/wlasl/wlasl_gru_rtmpose.meta.json", encoding="utf-8"))
 gate = {k: meta.get(k) for k in ("raw_features", "gate", "gate_inside",
                                  "gate_conflict", "gate_soft",
                                  "extraction_threshold")}

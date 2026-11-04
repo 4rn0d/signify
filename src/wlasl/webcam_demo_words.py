@@ -28,6 +28,8 @@ import numpy as np
 import tensorflow as tf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# train_kfold est dans src/core, partage avec ASL Citizen.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core"))
 
 import mediapipe as mp
 
@@ -43,7 +45,7 @@ from train_kfold import MAX_LEN, add_rich_features, mirror, pad_sequence
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_gru.meta.json")
+META_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl", "wlasl_gru.meta.json")
 
 # Les clips d'entrainement durent 2.8 s en mediane. On enregistre la meme
 # duree en secondes plutot qu'un nombre fixe de frames : la webcam peut
@@ -91,7 +93,7 @@ def load_model():
     if not os.path.exists(META_PATH):
         raise SystemExit(
             f"Fiche absente : {META_PATH}. Lance d abord : "
-            "python src/wlasl/train_final.py"
+            "python src/core/train_final.py"
         )
 
     with open(META_PATH, encoding="utf-8") as handle:
@@ -102,7 +104,7 @@ def load_model():
     if missing:
         raise SystemExit(
             "Modeles absents : " + ", ".join(missing)
-            + ". Lance : python src/wlasl/train_final.py"
+            + ". Lance : python src/core/train_final.py"
         )
 
     models = [tf.keras.models.load_model(p) for p in paths]

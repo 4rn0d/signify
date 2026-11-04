@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------
 # Datasets (~1.5 Go) - regenerables
 #   data/raw/       : telecharge (ASL Alphabet)
-#   data/processed/ : genere par src/prepare_segmented_dataset.py
+#   data/processed/ : genere par src/alphabet/prepare_segmented_dataset.py
 # ---------------------------------------------------------------
 data/raw/*
 data/processed/*
@@ -9,7 +9,7 @@ data/landmarks/*
 !data/**/.gitkeep
 
 # ---------------------------------------------------------------
-# Artefacts entraines - regeneres par src/train.py (~11 min)
+# Artefacts entraines - regeneres par src/alphabet/train.py (~11 min)
 # class_names.json est garde : petit et utile comme metadonnee.
 # ---------------------------------------------------------------
 # Motifs sans prefixe de dossier : "models/*.keras" ne descend pas dans

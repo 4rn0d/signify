@@ -14,8 +14,8 @@ sources faisant 200x200, 128 est le bon compromis (on reduit presque
 toujours, donc aucun detail invente).
 
 Usage:
-    python src/prepare_segmented_dataset.py
-    python src/prepare_segmented_dataset.py --size 128 --out asl_alphabet_segmented_128
+    python src/alphabet/prepare_segmented_dataset.py
+    python src/alphabet/prepare_segmented_dataset.py --size 128 --out asl_alphabet_segmented_128
 """
 
 import argparse
@@ -29,7 +29,7 @@ import cv2
 from hand_segmenter import HandSegmenter
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 SOURCE_DIR = (
     PROJECT_ROOT

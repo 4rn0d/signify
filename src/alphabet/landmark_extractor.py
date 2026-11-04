@@ -21,7 +21,7 @@ from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 RAW_DIR = os.path.join(
     PROJECT_ROOT, "data", "raw", "asl_alphabet_train", "asl_alphabet_train"
@@ -34,7 +34,7 @@ SEGMENTED_DIR = os.path.join(
 OUTPUT_CSV = os.path.join(PROJECT_ROOT, "data", "landmarks", "landmarks.csv")
 
 HAND_LANDMARKER_PATH = os.path.join(
-    PROJECT_ROOT, "models", "hand_landmarker.task"
+    PROJECT_ROOT, "models", "alphabet", "hand_landmarker.task"
 )
 
 NUM_LANDMARKS = 21

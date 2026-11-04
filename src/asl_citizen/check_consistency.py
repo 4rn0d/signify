@@ -28,7 +28,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(ROOT, "src", "wlasl"))
+sys.path.insert(0, os.path.join(ROOT, "src", "core"))
 import timebase as tb  # noqa: E402
 
 ARM = [c for pair in tb.MOTION_POINTS for c in pair]

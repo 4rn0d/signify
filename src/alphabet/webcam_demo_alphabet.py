@@ -27,10 +27,10 @@ from landmark_extractor import normalize_landmarks
 
 
 PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "alphabet")
 
 CLASSES_PATH = os.path.join(MODELS_DIR, "class_names.json")
 

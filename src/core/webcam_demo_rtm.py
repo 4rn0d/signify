@@ -64,7 +64,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 # La fiche ASL Citizen remplace la fiche WLASL des qu elle existe : c est le
 # modele de la phase en cours. --card force l une ou l autre.
 CARDS = [os.path.join(PROJECT_ROOT, "models", "aslc_gru_rtmpose.meta.json"),
-         os.path.join(PROJECT_ROOT, "models", "wlasl_gru_rtmpose.meta.json")]
+         os.path.join(PROJECT_ROOT, "models", "wlasl", "wlasl_gru_rtmpose.meta.json")]
 META_PATH = next((c for c in CARDS if os.path.exists(c)), CARDS[-1])
 
 RECORD_SECONDS = 2.8
@@ -120,7 +120,7 @@ def load_model():
     if not os.path.exists(META_PATH):
         raise SystemExit(
             f"Fiche absente : {META_PATH}\n"
-            "Lance d abord : python src/wlasl/train_final.py"
+            "Lance d abord : python src/core/train_final.py"
         )
 
     with open(META_PATH, encoding="utf-8") as handle:

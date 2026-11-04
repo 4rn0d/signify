@@ -12,7 +12,7 @@ from model_cnn import build_cnn_model
 
 
 PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 
 DATA_DIR = os.path.join(
@@ -33,13 +33,13 @@ EARLY_STOPPING_PATIENCE = 5
 
 MODEL_PATH = os.path.join(
     PROJECT_ROOT,
-    "models",
+    "models", "alphabet",
     "sign_model.keras"
 )
 
 CLASSES_PATH = os.path.join(
     PROJECT_ROOT,
-    "models",
+    "models", "alphabet",
     "class_names.json"
 )
 
@@ -47,7 +47,7 @@ CLASSES_PATH = os.path.join(
 # Sans ca, deux .keras sont indistinguables sur le disque.
 META_PATH = os.path.join(
     PROJECT_ROOT,
-    "models",
+    "models", "alphabet",
     "sign_model.meta.json"
 )
 
@@ -55,7 +55,7 @@ META_PATH = os.path.join(
 # (0.4 ms au lieu de 36 ms), pour le temps reel dans webcam_demo.py.
 TFLITE_PATH = os.path.join(
     PROJECT_ROOT,
-    "models",
+    "models", "alphabet",
     "sign_model.tflite"
 )
 

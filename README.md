@@ -13,10 +13,14 @@ words from body and hand keypoints.
   Research-only license: never commit, share or publish anything from it.
 - data/asl_lex/ — ASL-LEX 2.0 sign data, used to rank signs by frequency
 - notebooks/ — exploration and visualization
-- src/ — alphabet pipeline
-- src/wlasl/ — word pipeline: extraction, features, training, demo
-- src/asl_citizen/ — ASL Citizen extraction and checks
-- models/ — saved model weights and model cards
+- src/core/ — word pipeline shared by every dataset: RTMPose features,
+  time base, training (`train_kfold`, `train_final`), demo, parity checks
+- src/asl_citizen/ — ASL Citizen extraction and checks (current phase)
+- src/wlasl/ — WLASL download, audit and MediaPipe tools (closed phase)
+- src/alphabet/ — fingerspelling pipeline (closed phase)
+- models/ — current results and models at the top level; `models/wlasl/`
+  and `models/alphabet/` hold the closed phases (see models/README.md)
+- scripts/ — `wsl_gpu.sh`, runs training on the GPU through WSL2
 
 All of `data/` except `.gitkeep` files is gitignored.
 
@@ -31,11 +35,12 @@ pip uninstall -y onnxruntime
 pip install --force-reinstall --no-deps onnxruntime-gpu==1.22.0
 
 # Check that CUDA really runs, not just that it is listed:
-python src/wlasl/gpu_setup.py
+python src/core/gpu_setup.py
 ```
 
-TensorFlow trains on CPU (no GPU support on native Windows since 2.11); only
-pose detection uses the GPU.
+TensorFlow has no GPU support on native Windows since 2.11: pose detection and
+the demo run on Windows, training runs on the GPU through WSL2
+(`scripts/wsl_gpu.sh`, setup in its header).
 
 ASL Citizen (45.9 GB, Microsoft Research License):
 
@@ -62,8 +67,8 @@ curl -L -C - -o data/asl_citizen/ASL_Citizen.zip \
 ## Running
 
 ```
-python src/webcam_demo_alphabet.py      # letters, fusion model
-python src/wlasl/webcam_demo_rtm.py     # words, RTMPose + GRU ensemble
+python src/alphabet/webcam_demo_alphabet.py      # letters, fusion model
+python src/core/webcam_demo_rtm.py     # words, RTMPose + GRU ensemble
 ```
 
 The word demo follows the model card: recording length, window placement and

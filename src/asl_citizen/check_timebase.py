@@ -28,7 +28,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(ROOT, "src", "wlasl"))
+sys.path.insert(0, os.path.join(ROOT, "src", "core"))
 import timebase as tb  # noqa: E402
 
 LEFT_WRIST_Y, RIGHT_WRIST_Y = tb.POSE_START + 11, tb.POSE_START + 13

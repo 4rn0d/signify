@@ -38,7 +38,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 FEATURES_DIR = os.path.join(PROJECT_ROOT, "data", "wlasl", "features")
 MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", "wlasl", "download_manifest.json")
-RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl_kfold.json")
+RESULTS_PATH = os.path.join(PROJECT_ROOT, "models", "wlasl", "wlasl_kfold.json")
 
 
 def results_path_for(features_dir):

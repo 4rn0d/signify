@@ -39,7 +39,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "wlasl"))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "core"))
 
 from gpu_setup import enable_cuda_dlls  # noqa: E402
 

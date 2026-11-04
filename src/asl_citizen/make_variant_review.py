@@ -33,7 +33,7 @@ import cv2
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CITIZEN = os.path.join(ROOT, "data", "asl_citizen", "ASL_Citizen")
 REFERENCE = os.path.join(ROOT, "data", "wlasl", "reference")
-CARD = os.path.join(ROOT, "models", "wlasl_gru_rtmpose.meta.json")
+CARD = os.path.join(ROOT, "models", "wlasl", "wlasl_gru_rtmpose.meta.json")
 MANIFEST = os.path.join(ROOT, "data", "wlasl", "download_manifest.json")
 OUTPUT = os.path.join(ROOT, "data", "asl_citizen", "variant_review.html")
 

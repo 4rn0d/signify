@@ -7,7 +7,7 @@ de calage. Sous-echantillonner, lui, duplique.
 """
 import sys
 import numpy as np
-sys.path.insert(0, "src/wlasl")
+sys.path.insert(0, "src/core")
 from webcam_demo_rtm import RECORD_SECONDS, TARGET_FPS, resample, MAX_LEN
 from train_kfold import pad_sequence
 

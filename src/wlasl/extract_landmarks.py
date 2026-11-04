@@ -46,7 +46,7 @@ MANIFEST_PATH = os.path.join(WLASL_DIR, "download_manifest.json")
 FEATURES_DIR = os.path.join(WLASL_DIR, "features")
 EXTRACT_REPORT = os.path.join(WLASL_DIR, "extract_report.json")
 
-HOLISTIC_MODEL = os.path.join(PROJECT_ROOT, "models", "holistic_landmarker.task")
+HOLISTIC_MODEL = os.path.join(PROJECT_ROOT, "models", "wlasl", "holistic_landmarker.task")
 
 # Haut du corps uniquement : les jambes n'apportent rien a un signe.
 POSE_KEYPOINTS = [
