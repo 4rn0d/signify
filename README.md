@@ -83,3 +83,10 @@ python src/asl_citizen/extract.py --ranks 101-400   # pretraining signs
 python src/asl_citizen/check_parity.py              # extraction == demo input
 python src/asl_citizen/check_window_parity.py       # same 80-frame window both sides
 ```
+
+Training (the full baseline command is in docs/ASL_CITIZEN.md, §7 item 3b):
+
+```
+wsl -d Ubuntu-24.04 -- bash scripts/wsl_gpu.sh src/core/train_kfold.py \
+  --features-dir data/asl_citizen/features --vocab 100 --readout attention ...
+```

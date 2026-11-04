@@ -82,12 +82,15 @@ for cell in ("gru", "tcn", "stgcn"):
     model.fit(x, y, batch_size=32, epochs=1, verbose=0)
     seconds = time.perf_counter() - start
 
+    # Sur de VRAIS clips, sans augmentation : c est ce que la demo donnera au
+    # modele recharge.
+    real = to_model(features[train[:8]])
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, f"{cell}.keras")
         model.save(path)
         reloaded = tf.keras.models.load_model(path)
-        same = np.allclose(model.predict(x[:8], verbose=0),
-                           reloaded.predict(x[:8], verbose=0), atol=1e-6)
+        same = np.allclose(model.predict(real, verbose=0),
+                           reloaded.predict(real, verbose=0), atol=1e-6)
 
     head = build_model(400, 96, feature_dim, cell, 0.1, 48, raw_dim=raw_dim)
     fits = all(

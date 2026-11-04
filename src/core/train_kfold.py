@@ -17,9 +17,13 @@ la reconnaissance de personnes plutot que de signes.
 
 import argparse
 import collections
+import concurrent.futures
 import glob
+import hashlib
+import inspect
 import json
 import os
+import pickle
 
 import sys
 
@@ -357,19 +361,36 @@ def mirror(batch, layout=None):
 
 
 def time_warp(sequence, rng, low=0.8, high=1.25):
-    """Reechantillonne la sequence a une vitesse differente."""
+    """Change la vitesse du signe, autour du centre de la partie reelle.
+
+    La sequence garde sa longueur. Un facteur > 1 ralentit : le centre est
+    etire et les bords sortent de la fenetre. Un facteur < 1 accelere : le
+    signe se resserre au centre, et ce qui manque aux bords est la premiere ou
+    la derniere frame repetee, comme timebase et la demo completent une
+    fenetre qui deborde du clip.
+
+    L ancienne version reechantillonnait les 80 frames vers int(80 x facteur)
+    puis completait par des zeros. Au-dessus de 1, plafonnee a 80, elle
+    rendait la fenetre intacte ; en dessous, elle tassait le signe vers le
+    debut et ajoutait des zeros que la demo ne produit jamais. Elle ne faisait
+    donc qu accelerer, de 0.8 a 1.0x, et ce depuis WLASL.
+    """
     factor = rng.uniform(low, high)
-    length = len(sequence)
-    new_len = max(8, min(MAX_LEN, int(length * factor)))
+    real = np.flatnonzero(np.any(sequence != 0, axis=1))
+    # Le remplissage de WLASL, des zeros en fin de sequence, reste en place.
+    length = real[-1] + 1 if len(real) else 0
+    if length < 2:
+        return sequence
 
-    source = np.linspace(0, length - 1, new_len)
-    warped = np.stack(
-        [np.interp(source, np.arange(length), sequence[:, c])
-         for c in range(sequence.shape[1])],
-        axis=1,
-    ).astype(np.float32)
+    centre = (length - 1) / 2
+    position = np.clip(centre + (np.arange(length) - centre) / factor, 0, length - 1)
+    before = np.floor(position).astype(int)
+    after = np.minimum(before + 1, length - 1)
+    weight = (position - before)[:, None].astype(np.float32)
 
-    return pad_sequence(warped)
+    out = sequence.copy()
+    out[:length] = sequence[before] * (1.0 - weight) + sequence[after] * weight
+    return out
 
 
 def augment_batch(batch, rng, layout=None, hand_dropout=0.0):
@@ -381,12 +402,17 @@ def augment_batch(batch, rng, layout=None, hand_dropout=0.0):
         if rng.random() < 0.5:
             item = time_warp(item, rng)
 
-        # Abandon de frames : imite les echecs de detection, frequents ici
-        # (la main n'est vue que dans ~60% des frames).
+        # Abandon de frames : une frame perdue est remplacee par la precedente,
+        # ce que timebase fait d une webcam qui saute des images. Elle etait
+        # mise a zero, pour imiter les echecs de detection de MediaPipe sur
+        # WLASL ; sur ASL Citizen il n y en a aucun (0 frame nulle sur
+        # 981 600), et ces zeros au milieu du clip etaient la seule chose que
+        # le Masking du GRU avait a cacher, ce qui interdisait cuDNN sur GPU.
         if rng.random() < 0.3:
-            item = item.copy()
             drop = rng.random(len(item)) < 0.1
-            item[drop] = 0.0
+            drop[0] = False
+            kept = np.where(drop, 0, np.arange(len(item)))
+            item = item[np.maximum.accumulate(kept)]
 
         # Bruit leger sur les coordonnees.
         if rng.random() < 0.5:
@@ -748,7 +774,19 @@ def add_handshape(batch, layout=None, full=False):
     owners = []          # quelle main possede chaque colonne
 
     for side, off in enumerate((0, hand_block)):
-        palm = np.maximum(dist(point(off, 5), point(off, 17)), 1e-6)
+        # La largeur de paume (base de l index -> base de l auriculaire)
+        # s effondre a l ecran quand la paume se met de profil, et vaut 0
+        # quand RTMPose replie une main invisible sur un seul point. Avec le
+        # seul plancher de 1e-6, les rapports montaient a 900 000 dans 1.9%
+        # des frames filtrees d ASL Citizen et 27.6% des frames brutes : le
+        # pre-entrainement n apprenait plus rien. La longueur poignet ->
+        # base du majeur, elle, reste visible de profil ; sa moitie sert de
+        # largeur minimale (une paume de face fait ~0.7 fois cette longueur,
+        # donc une main de face garde exactement ses valeurs). Le plancher
+        # absolu, 10% d une paume mediane, couvre la main repliee.
+        palm = np.maximum.reduce([dist(point(off, 5), point(off, 17)),
+                                  0.5 * dist(point(off, 0), point(off, 9)),
+                                  np.full(batch.shape[:-1], 0.02, dtype=batch.dtype)])
 
         # opposition du pouce : la position du pouce face aux autres doigts
         for tip in (8, 12, 16, 20):
@@ -1060,6 +1098,46 @@ class GraphConv(layers.Layer):
         return {**super().get_config(), "units": self.units}
 
 
+@keras.saving.register_keras_serializable(package="signify")
+class AttentionPool(layers.Layer):
+    """Moyenne PONDEREE des frames, les poids appris.
+
+    Le GRU lisait sa reponse dans son etat final, donc au bord de la fenetre,
+    apres ~18 frames de repos : a l initialisation il oublie environ la
+    moitie de sa memoire a chaque frame, et sur ASL Citizen il ne sortait
+    jamais du hasard sur l echafaudage de 400 signes. La moyenne simple
+    regle cela mais compte le repos autant que le signe. Ici un petit reseau
+    note chaque frame (v . tanh(W h + b)), un softmax sur le temps en fait
+    des poids qui somment a 1, et les frames masquees n en recoivent aucun.
+    """
+
+    def __init__(self, units=64, **kwargs):
+        super().__init__(**kwargs)
+        self.units = int(units)
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        self.kernel = self.add_weight(name="kernel", shape=(input_shape[-1], self.units),
+                                      initializer="glorot_uniform")
+        self.bias = self.add_weight(name="bias", shape=(self.units,), initializer="zeros")
+        self.score = self.add_weight(name="score", shape=(self.units, 1),
+                                     initializer="glorot_uniform")
+
+    def call(self, inputs, mask=None):
+        hidden = tf.tanh(tf.einsum("btd,du->btu", inputs, self.kernel) + self.bias)
+        scores = tf.einsum("btu,uo->bto", hidden, self.score)[..., 0]
+        if mask is not None:
+            scores = tf.where(mask, scores, tf.fill(tf.shape(scores), -1e9))
+        weights = tf.nn.softmax(scores, axis=1)
+        return tf.einsum("bt,btd->bd", weights, inputs)
+
+    def compute_mask(self, inputs, mask=None):
+        return None
+
+    def get_config(self):
+        return {**super().get_config(), "units": self.units}
+
+
 def _classifier(x, num_classes):
     """La tete commune aux trois architectures : memes couches que le GRU,
     la couche de sortie EN DERNIER, puisque le transfert du pre-entrainement
@@ -1144,8 +1222,21 @@ def build_stgcn(num_classes, units, feature_dim, raw_dim):
 
 
 def build_model(num_classes, units=96, feature_dim=155, cell="gru",
-                label_smoothing=0.0, project=0, raw_dim=None):
+                label_smoothing=0.0, project=0, raw_dim=None, readout="last",
+                clipnorm=None, layer_norm=False):
     """cell : 'gru', 'lstm', 'stack' (une couche de chaque), 'tcn' ou 'stgcn'.
+
+    readout, pour les cellules recurrentes : 'last' lit l etat final (WLASL),
+    'mean' la moyenne des frames, 'attention' une moyenne aux poids appris
+    (AttentionPool). TCN et ST-GCN font deja une moyenne sur le temps.
+
+    Le fold 5 de la premiere baseline ASL Citizen s est effondre des le
+    debut du pre-entrainement : GRU sature (meme sortie pour tous les clips,
+    ecart 0.004 contre 0.78 au fold 1) et 0% des ReLU de la tete encore
+    actives, donc plus aucun gradient et une prediction constante pour
+    toujours. clipnorm (plafond de la norme du gradient) n y change rien,
+    teste a 1.0 : avec Adam, la taille d un pas ne depend presque pas de
+    celle du gradient. layer_norm s attaque a la cause, voir plus bas.
 
     GRU et LSTM resolvent le meme probleme (gradients qui s'evanouissent dans
     un RNN) et ne different que par la presence d'un etat de cellule separe.
@@ -1161,19 +1252,27 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru",
         model = (build_tcn(num_classes, units, feature_dim, project)
                  if cell == "tcn"
                  else build_stgcn(num_classes, units, feature_dim, raw_dim))
-        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3), loss=loss,
-                      metrics=["accuracy"])
+        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=clipnorm),
+                      loss=loss, metrics=["accuracy"])
         return model
 
+    # Sur GPU, cuDNN calcule le GRU entier en un appel, mais n accepte qu un
+    # masque qui cache la FIN des sequences. Une frame nulle au milieu d un
+    # clip le fait planter (il ne calcule pas autre chose). ASL Citizen n en a
+    # aucune, ni l augmentation depuis qu elle n en fabrique plus : le masque
+    # ne cache rien et cuDNN l accepte. use_cudnn=False aurait tout ralenti
+    # 25x (98 s par epoch au lieu de 4), et Keras ne le sauvegarde pas.
+    rnn = dict(dropout=0.3)
+    pooled = readout != "last"
     if cell == "lstm":
-        first = layers.LSTM(units, return_sequences=True, dropout=0.3)
-        second = layers.LSTM(units, dropout=0.3)
+        first = layers.LSTM(units, return_sequences=True, **rnn)
+        second = layers.LSTM(units, return_sequences=pooled, **rnn)
     elif cell == "stack":
-        first = layers.GRU(units, return_sequences=True, dropout=0.3)
-        second = layers.LSTM(units, dropout=0.3)
+        first = layers.GRU(units, return_sequences=True, **rnn)
+        second = layers.LSTM(units, return_sequences=pooled, **rnn)
     else:
-        first = layers.GRU(units, return_sequences=True, dropout=0.3)
-        second = layers.GRU(units, dropout=0.3)
+        first = layers.GRU(units, return_sequences=True, **rnn)
+        second = layers.GRU(units, return_sequences=pooled, **rnn)
 
     body = [
         layers.Input(shape=(MAX_LEN, feature_dim)),
@@ -1199,9 +1298,24 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru",
         body.append(layers.TimeDistributed(
             layers.Dense(project, activation=None), name="projection"))
 
+    if layer_norm:
+        # Les 155 colonnes ne sont pas a la meme echelle (ecart-type de 0.008
+        # a 1.25 selon la colonne). Au fold 5 de la premiere baseline ASL
+        # Citizen, la projection sortait des valeurs 2.5x plus grandes qu au
+        # fold 1, le GRU s est sature (62% des sorties a +-1, 0.005 d ecart
+        # entre clips) et n a plus jamais lu son entree. Remise a l echelle a
+        # chaque frame, avant le GRU ; dans le modele, donc la demo suit.
+        body.append(layers.LayerNormalization(name="input_norm"))
+
+    body += [layers.Bidirectional(first), layers.Bidirectional(second)]
+    if readout == "mean":
+        body.append(layers.GlobalAveragePooling1D(name="pool"))
+    elif readout == "attention":
+        body.append(AttentionPool(name="attention"))
+    elif readout != "last":
+        raise ValueError(f"readout inconnu : {readout}")
+
     body += [
-        layers.Bidirectional(first),
-        layers.Bidirectional(second),
         layers.Dense(128, activation="relu"),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation="softmax"),
@@ -1218,7 +1332,7 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru",
     )
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-3),
+        optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=clipnorm),
         loss=loss,
         metrics=["accuracy"],
     )
@@ -1239,6 +1353,70 @@ def signer_folds(records, k, seed=0):
         loads[target] += count
 
     return [set(f) for f in folds], loads
+
+
+# Le code dont depend un pre-entrainement. Si l une de ces definitions change
+# (une augmentation corrigee, un modele retouche), un pre-entrainement mis en
+# cache n est plus celui que le code produirait. Le corps de main() n est pas
+# couvert : il change a chaque nouvelle option d affinage.
+PRETRAIN_CODE = (Layout, load_sequences, top_glosses, signer_folds, pad_sequence,
+                 mirror, time_warp, augment_batch, drop_hand, add_velocity,
+                 drop_z_indices, add_depth_proxy, gate_hands, add_handshape,
+                 add_symmetry, add_rich_features, skeleton_edges, skeleton_adjacency,
+                 Columns, SkeletonNodes, GraphConv, AttentionPool, _classifier,
+                 build_tcn, build_stgcn, build_model, timebase)
+
+# Options qui n agissent qu APRES le pre-entrainement : les changer reprend le
+# cache. Toute autre option le rend perime, y compris celles qui ne changent
+# que la partition des signeurs (--vocab, --clips-from...), puisque c est elle
+# qui decide quels signeurs le pre-entrainement exclut.
+FINE_TUNE_ONLY = {"epochs", "tta", "tag", "only_fold", "seeds", "shared_pretrain",
+                  "pretrain_cache", "interpolate", "smooth", "max_train_signers",
+                  # change la vitesse, pas les nombres (verifie au bit pres)
+                  "no_prefetch"}
+# Le filtrage des mains ne touche l echafaudage qu avec --gate-pretrain.
+GATE_OPTIONS = {"gate", "gate_soft", "gate_inside", "gate_conflict"}
+
+
+def pretrain_fingerprint(args, device):
+    """Ce qui determine un pre-entrainement : options, code et materiel.
+
+    Le materiel compte : le GPU ne calcule pas les memes nombres que le CPU,
+    et un cache GPU repris sur CPU ne reproduirait plus le run.
+    """
+    ignored = FINE_TUNE_ONLY | (set() if args.gate_pretrain else GATE_OPTIONS)
+    options = {k: v for k, v in sorted(vars(args).items()) if k not in ignored}
+    source = "".join(inspect.getsource(item) for item in PRETRAIN_CODE)
+    return {"options": options, "device": device,
+            "code": hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]}
+
+
+def load_pretrain(path, fingerprint):
+    """Le pre-entrainement en cache, None s il n existe pas, arret s il est perime."""
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as handle:
+        cached = pickle.load(handle)
+    old = cached["fingerprint"]
+    if old != fingerprint:
+        stale = sorted(k for k in set(old["options"]) | set(fingerprint["options"])
+                       if old["options"].get(k) != fingerprint["options"].get(k))
+        stale += [k for k in ("device", "code") if old[k] != fingerprint[k]]
+        raise SystemExit(
+            f"{path} vient d un autre pre-entrainement (differe : "
+            f"{', '.join(stale)}). Le reprendre melangerait deux configurations "
+            f"sans le dire : choisir un autre dossier --pretrain-cache.")
+    return cached
+
+
+def save_pretrain(path, entry):
+    # Ecriture atomique, comme l extraction : un run interrompu ne laisse pas
+    # un fichier tronque que le suivant prendrait pour un cache valide.
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    partial = path + ".tmp"
+    with open(partial, "wb") as handle:
+        pickle.dump(entry, handle)
+    os.replace(partial, path)
 
 
 def main():
@@ -1263,6 +1441,26 @@ def main():
                         choices=("gru", "lstm", "stack", "tcn", "stgcn"),
                         help="tcn : convolutions dilatees non causales ; stgcn : "
                              "graphe sur les 51 articulations du squelette")
+    parser.add_argument("--clipnorm", type=float, default=0.0, metavar="X",
+                        help="plafond de la norme du gradient (0 = aucun). "
+                             "N empeche PAS l effondrement du fold 5 de la "
+                             "premiere baseline ASL Citizen (teste a 1.0)")
+    parser.add_argument("--layer-norm", action="store_true",
+                        help="LayerNormalization entre la projection et le GRU : "
+                             "remet l entree a l echelle a chaque frame. Contre "
+                             "l effondrement du fold 5, voir build_model.")
+    parser.add_argument("--no-prefetch", action="store_true",
+                        help="preparer chaque epoch (augmentation, colonnes "
+                             "derivees) APRES la precedente, comme avant. Par "
+                             "defaut elle est preparee sur le CPU pendant que "
+                             "le GPU entraine la precedente ; les nombres sont "
+                             "les memes, seule la duree change.")
+    parser.add_argument("--readout", default="last",
+                        choices=("last", "mean", "attention"),
+                        help="comment un GRU/LSTM rend sa reponse : etat final "
+                             "(WLASL), moyenne des frames, ou moyenne aux poids "
+                             "appris. Sur ASL Citizen l etat final arrive apres "
+                             "~18 frames de repos et ne sort pas du hasard.")
     parser.add_argument("--features-dir", default=None,
                         help="dossier de sequences (defaut : data/wlasl/features)")
     parser.add_argument("--vocab", type=int, default=50,
@@ -1313,6 +1511,13 @@ def main():
                              "mais les graines partent des memes poids et "
                              "divergent moins, donc l ensemble peut rapporter "
                              "moins.")
+    parser.add_argument("--pretrain-cache", default="", metavar="DOSSIER",
+                        help="garder chaque pre-entrainement (un par fold et "
+                             "graine) dans ce dossier, et le reprendre s il y "
+                             "est deja : un run qui reprend donne exactement le "
+                             "resultat d un run qui pre-entraine. Refuse un "
+                             "cache fait avec d autres options, un autre code "
+                             "ou un autre materiel.")
     parser.add_argument("--pretrain-probe", default="",
                         help="points de mesure du pre-entrainement, en epochs, "
                              "separes par des virgules : un seul "
@@ -1399,6 +1604,11 @@ def main():
     if only_folds and not only_folds <= set(range(1, args.folds + 1)):
         parser.error(f"--only-fold hors de 1..{args.folds} : "
                      f"{sorted(only_folds - set(range(1, args.folds + 1)))}")
+
+    if args.pretrain_cache and not args.pretrain_vocab:
+        parser.error("--pretrain-cache demande --pretrain-vocab")
+    fingerprint = pretrain_fingerprint(args, device) if args.pretrain_cache else None
+    cached_folds = []
 
     probes = sorted({int(x) for x in args.pretrain_probe.split(",") if x.strip()})
     if probes:
@@ -1542,6 +1752,38 @@ def main():
 
         return batch
 
+    def prepared_epochs(x, y, count, classes, rng):
+        """Les `count` epochs d entrainement : lots melanges, augmentes, mis
+        en colonnes.
+
+        Chaque epoch est preparee sur le CPU (numpy) PENDANT que le GPU
+        entraine la precedente ; avant, les deux alternaient et le GPU
+        attendait le tiers du temps. Un seul fil de preparation, qui tire
+        dans `rng` exactement dans le meme ordre qu avant, et jamais une epoch
+        de trop : l etat du generateur a la fin (que --pretrain-cache
+        enregistre) est le meme, et les resultats aussi, au bit pres.
+        """
+        def prepare():
+            order = rng.permutation(len(x))
+            batch = augment_batch(x[order], rng, layout, args.hand_dropout)
+            if args.velocity:
+                batch = add_velocity(batch)
+            target = y[order]
+            if args.label_smoothing > 0:
+                target = tf.keras.utils.to_categorical(target, classes)
+            return to_model(batch), target
+
+        if args.no_prefetch:
+            for _ in range(count):
+                yield prepare()
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(prepare) if count else None
+            for index in range(count):
+                ready = pending.result()
+                pending = pool.submit(prepare) if index + 1 < count else None
+                yield ready
+
     # La velocite double les colonnes BRUTES uniquement : add_velocity est
     # appliquee avant to_model, donc les scalaires derives sont ajoutes APRES
     # le doublement et ne sont pas doubles. Multiplier le total, comme le
@@ -1597,9 +1839,12 @@ def main():
         # --features-dir cet appel relisait le dossier par defaut (MediaPipe,
         # 155 colonnes) pour pre-entrainer un modele affine ensuite sur 129.
         # Les variantes se filtrent separement : voir --pretrain-variants.
+        # Les confiances par main ne sont lues que si l echafaudage est
+        # filtre : sans elles, --gate-pretrain plantait sur r["meta"] vide.
         extra = load_sequences(args.pretrain_variants or args.variants,
                                args.features_dir,
-                               with_confidence=args.confidence)
+                               with_confidence=args.confidence,
+                               with_meta=gating and args.gate_pretrain)
         # Les n premiers signes CIBLE COMPRISE, comme pour WLASL : avec ASL
         # Citizen, --pretrain-vocab 400 donne les rangs 1 a 400.
         wide = top_glosses(extra, args.pretrain_vocab)
@@ -1680,33 +1925,38 @@ def main():
             rng = np.random.default_rng(args.seed + fold_index * 100 + seed_index)
             model = build_model(len(glosses), args.units, feature_dim,
                                 args.cell, args.label_smoothing, args.project,
-                                raw_dim=raw_dim)
+                                raw_dim=raw_dim, readout=args.readout,
+                                clipnorm=args.clipnorm or None,
+                                layer_norm=args.layer_norm)
 
             reuse = args.shared_pretrain and shared is not None
+            pretrain_now = pretrain_x is not None and not reuse
 
-            if pretrain_x is not None and not reuse:
+            cached = None
+            if pretrain_now and args.pretrain_cache:
+                cache_path = os.path.join(args.pretrain_cache,
+                                          f"fold{fold_index}_seed{seed_index}.pkl")
+                cached = load_pretrain(cache_path, fingerprint)
+
+            if pretrain_now and cached is None:
                 # Les signeurs du fold de test sont exclus du pre-entrainement
                 # aussi, sinon le modele les aurait vus avant l'affinage.
                 keep = ~np.isin(pretrain_signers, list(held))
                 head = build_model(len(set(pretrain_y)), args.units, feature_dim,
                                    args.cell, args.label_smoothing, args.project,
-                                   raw_dim=raw_dim)
+                                   raw_dim=raw_dim, readout=args.readout,
+                                   clipnorm=args.clipnorm or None,
+                                   layer_norm=args.layer_norm)
                 snapshots = {}
                 # La boucle tournait sans rien rapporter : impossible de dire
                 # apres coup si 60 epochs suffisaient, si c etait trop, ou si
                 # le pre-entrainement avait seulement commence a converger.
                 # On garde donc sa precision, sur sa propre tache.
                 pretrain_curve = []
-                for index in range(args.pretrain_epochs):
-                    order = rng.permutation(int(keep.sum()))
-                    px = augment_batch(pretrain_x[keep][order], rng, layout,
-                                       args.hand_dropout)
-                    if args.velocity:
-                        px = add_velocity(px)
-                    px = to_model(px)
-                    py = pretrain_y[keep][order]
-                    if args.label_smoothing > 0:
-                        py = tf.keras.utils.to_categorical(py, len(set(pretrain_y)))
+                pretrain_batches = prepared_epochs(
+                    pretrain_x[keep], pretrain_y[keep], args.pretrain_epochs,
+                    len(set(pretrain_y)), rng)
+                for index, (px, py) in enumerate(pretrain_batches):
                     history = head.fit(px, py, batch_size=args.batch,
                                        epochs=1, verbose=0)
                     pretrain_curve.append(round(
@@ -1730,13 +1980,35 @@ def main():
                           f" {len(set(pretrain_y))} gloses) : {shown}", flush=True)
                     pretrain_curves.append(pretrain_curve)
 
-            if pretrain_x is not None and not reuse:
+            if pretrain_now and cached is not None:
+                # Les poids, et l etat du generateur a la fin du
+                # pre-entrainement : l affinage tire ensuite les memes lots et
+                # les memes augmentations qu apres un pre-entrainement fait ici.
+                shared = {"final": cached["final"], "snapshots": cached["snapshots"]}
+                rng.bit_generator.state = cached["rng"]
+                cached_folds.append(fold_index)
+                if seed_index == 0:
+                    print(f"    pre-entrainement repris de {cache_path}", flush=True)
+                    pretrain_curves.append(cached["curve"])
+            elif pretrain_now:
                 # Poids finaux mis de cote : avec --shared-pretrain les graines
                 # suivantes repartent de la, sans refaire le pre-entrainement.
                 shared = {
                     "final": [l.get_weights() for l in head.layers[:-1]],
                     "snapshots": {k: v for k, v in snapshots.items()},
                 }
+                if args.pretrain_cache:
+                    save_pretrain(cache_path, {
+                        "fingerprint": fingerprint, "final": shared["final"],
+                        "snapshots": shared["snapshots"],
+                        "rng": rng.bit_generator.state, "curve": pretrain_curve})
+
+            if args.pretrain_cache and pretrain_x is not None:
+                # Le pre-entrainement fait avancer l etat aleatoire de
+                # TensorFlow (melange des lots dans fit), un cache repris non :
+                # on le remet a la graine, des deux cotes, pour que l affinage
+                # parte du meme etat. Sans --pretrain-cache, rien ne change.
+                tf.keras.utils.set_random_seed(args.seed + fold_index * 100 + seed_index)
 
             # Un affinage par sonde, chacun repartant des poids figes a son
             # epoch. Sans sonde, une seule passe, depuis la fin du
@@ -1749,7 +2021,10 @@ def main():
                         args.seed + fold_index * 100 + seed_index)
                     fresh = build_model(len(glosses), args.units, feature_dim,
                                         args.cell, args.label_smoothing,
-                                        args.project, raw_dim=raw_dim)
+                                        args.project, raw_dim=raw_dim,
+                                        readout=args.readout,
+                                        clipnorm=args.clipnorm or None,
+                                        layer_norm=args.layer_norm)
 
                 if pretrain_x is not None:
                     # Tout sauf la couche de sortie, dont le nombre de classes
@@ -1761,18 +2036,8 @@ def main():
                             target.set_weights(weights)
 
                 curve = []
-                for epoch in range(args.epochs):
-                    order = rng.permutation(len(train_x))
-                    batch_x = augment_batch(train_x[order], rng, layout,
-                                            args.hand_dropout)
-                    if args.velocity:
-                        batch_x = add_velocity(batch_x)
-                    batch_x = to_model(batch_x)
-
-                    fit_y = train_y[order]
-                    if args.label_smoothing > 0:
-                        fit_y = tf.keras.utils.to_categorical(fit_y, len(glosses))
-
+                for batch_x, fit_y in prepared_epochs(train_x, train_y, args.epochs,
+                                                      len(glosses), rng):
                     fresh.fit(batch_x, fit_y, batch_size=args.batch,
                               epochs=1, verbose=0)
 
@@ -1920,6 +2185,12 @@ def main():
                 "gate_pretrain": args.gate_pretrain,
                 "pretrain_epochs": args.pretrain_epochs,
                 "shared_pretrain": args.shared_pretrain,
+                "seed": args.seed,
+                "readout": args.readout,
+                "clipnorm": args.clipnorm or None,
+                "layer_norm": args.layer_norm,
+                "pretrain_cache": args.pretrain_cache or None,
+                "pretrain_cached_folds": sorted(set(cached_folds)),
                 "vocab": args.vocab,
                 "confidence": args.confidence,
                 "symmetry": args.symmetry,

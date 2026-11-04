@@ -36,6 +36,9 @@ CONFIG_KEYS = (
     # Le GPU et le CPU ne calculent pas les memes nombres : un fold GPU recolle
     # a des folds CPU donnerait une moyenne de deux experiences differentes.
     "device",
+    # Comment le GRU rend sa reponse, et ce qui le stabilise : un fold a etat
+    # final et un fold a attention ne sont pas le meme modele.
+    "readout", "layer_norm", "clipnorm",
 )
 
 
@@ -62,6 +65,13 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--allow-incomplete", action="store_true",
                         help="ecrire meme s il manque des folds")
+    parser.add_argument("--replace-fold", type=int, action="append", default=[],
+                        metavar="N",
+                        help="le fold N present dans plusieurs fichiers est pris "
+                             "dans le DERNIER, et la substitution est ecrite dans "
+                             "le resultat. Sert a refaire un fold rate : le fold 5 "
+                             "de la baseline ASL Citizen, effondre a la graine "
+                             "500, refait a la graine 501.")
     args = parser.parse_args()
 
     loaded = []
@@ -81,14 +91,25 @@ def main():
 
     # --- un fold ne peut venir que d un seul fichier ---
     by_fold = {}
+    replaced = {}
     for path, data in loaded:
         numbers = fold_numbers(data, path)
         for position, fold in enumerate(numbers):
             if fold in by_fold:
-                raise SystemExit(
-                    f"le fold {fold} est present dans deux fichiers : "
-                    f"{by_fold[fold][0]} et {path}")
+                if fold not in args.replace_fold:
+                    raise SystemExit(
+                        f"le fold {fold} est present dans deux fichiers : "
+                        f"{by_fold[fold][0]} et {path} (--replace-fold {fold} "
+                        f"pour prendre le second)")
+                replaced[str(fold)] = {
+                    "dropped_from": os.path.basename(by_fold[fold][0]),
+                    "taken_from": os.path.basename(path),
+                    "seed": data.get("seed")}
             by_fold[fold] = (path, data, position)
+    unused = sorted(set(args.replace_fold) - {int(k) for k in replaced})
+    if unused:
+        raise SystemExit(f"--replace-fold {unused} : ces folds n apparaissent "
+                         f"que dans un fichier, rien a remplacer")
 
     total = reference.get("folds", max(by_fold))
     missing = [f for f in range(1, total + 1) if f not in by_fold]
@@ -101,7 +122,10 @@ def main():
     order = sorted(by_fold)
     merged = dict(reference)
 
-    for field in ("per_fold", "per_fold_plateau", "curves", "by_seed_count"):
+    # out_of_fold porte les predictions de chaque fold (matrice de confusion) ;
+    # pretrain_curves la courbe de pre-entrainement de chaque fold.
+    for field in ("per_fold", "per_fold_plateau", "curves", "by_seed_count",
+                  "out_of_fold", "pretrain_curves"):
         values = []
         for fold in order:
             _, data, position = by_fold[fold]
@@ -118,6 +142,8 @@ def main():
     merged["std"] = float(scores.std())
     merged["folds_run"] = order
     merged["merged_from"] = [os.path.basename(p) for p, _ in loaded]
+    if replaced:
+        merged["replaced_folds"] = replaced
     merged.pop("folds_done", None)
     merged.pop("only_fold", None)
 
