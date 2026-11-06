@@ -10,35 +10,56 @@ enum GragasAnimation { idle, walk, rollBarrel, drinkBarrel, dash, throwBarrel }
 
 extension on GragasAnimation {
   int get row => switch (this) {
-    GragasAnimation.idle => 0,
-    GragasAnimation.walk => 1,
-    GragasAnimation.rollBarrel => 2,
-    GragasAnimation.drinkBarrel => 3,
-    GragasAnimation.dash => 4,
-    GragasAnimation.throwBarrel => 5,
-  };
+        GragasAnimation.idle => 0,
+        GragasAnimation.walk => 1,
+        GragasAnimation.rollBarrel => 2,
+        GragasAnimation.drinkBarrel => 3,
+        GragasAnimation.dash => 4,
+        GragasAnimation.throwBarrel => 5,
+      };
 
   int get frameCount => switch (this) {
-    GragasAnimation.idle => 12,
-    GragasAnimation.walk => 8,
-    GragasAnimation.rollBarrel => 14,
-    GragasAnimation.drinkBarrel => 25,
-    GragasAnimation.dash => 14,
-    GragasAnimation.throwBarrel => 18,
-  };
+        GragasAnimation.idle => 12,
+        GragasAnimation.walk => 8,
+        GragasAnimation.rollBarrel => 14,
+        GragasAnimation.drinkBarrel => 25,
+        GragasAnimation.dash => 14,
+        GragasAnimation.throwBarrel => 18,
+      };
 
   bool get loops => switch (this) {
-    GragasAnimation.idle || GragasAnimation.walk => true,
-    GragasAnimation.rollBarrel ||
-    GragasAnimation.dash ||
-    GragasAnimation.drinkBarrel ||
-    GragasAnimation.throwBarrel => false,
+        GragasAnimation.idle || GragasAnimation.walk => true,
+        GragasAnimation.rollBarrel ||
+        GragasAnimation.dash ||
+        GragasAnimation.drinkBarrel ||
+        GragasAnimation.throwBarrel =>
+          false,
+      };
+}
+
+Future<Map<GragasAnimation, SpriteAnimation>> loadGragasAnimations(
+  Images images,
+) async {
+  final sheet = SpriteSheet(
+    image: await images.load('Character/Gragas32-Sheet.png'),
+    srcSize: Vector2.all(48),
+  );
+  return {
+    for (final animation in GragasAnimation.values)
+      animation: SpriteAnimation.spriteList(
+        List.generate(
+          animation.frameCount,
+          (index) => sheet.getSprite(animation.row, index),
+        ),
+        stepTime: 0.07,
+        loop: animation.loops,
+      ),
   };
 }
 
 class GragasGame extends FlameGame {
   GragasGame({GragasAnimation animation = GragasAnimation.idle})
-    : _currentAnimation = animation;
+      : _currentAnimation = animation;
 
   GragasAnimation _currentAnimation;
   SpriteAnimationGroupComponent<GragasAnimation>? _gragas;
@@ -56,21 +77,7 @@ class GragasGame extends FlameGame {
   Future<void> onLoad() async {
     await super.onLoad();
 
-    final sheet = SpriteSheet(
-      image: await images.load('Character/Gragas32-Sheet.png'),
-      srcSize: Vector2.all(48),
-    );
-    final animations = {
-      for (final animation in GragasAnimation.values)
-        animation: SpriteAnimation.spriteList(
-          List.generate(
-            animation.frameCount,
-            (index) => sheet.getSprite(animation.row, index),
-          ),
-          stepTime: 0.14,
-          loop: animation.loops,
-        ),
-    };
+    final animations = await loadGragasAnimations(images);
 
     _gragas = SpriteAnimationGroupComponent<GragasAnimation>(
       animations: animations,

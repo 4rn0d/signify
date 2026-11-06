@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="60" tilewidth="16" tileheight="16" infinite="0" nextlayerid="7" nextobjectid="1">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="60" tilewidth="16" tileheight="16" infinite="0" nextlayerid="8" nextobjectid="3">
  <tileset firstgid="1" name="Tileset_Walls_Interiors" tilewidth="16" tileheight="16" tilecount="4060" columns="29">
   <image source="../images/WallsAndFloors/Walls_Interiors.png" width="464" height="2240"/>
   <tile id="117">
@@ -6273,4 +6273,9 @@
 </data>
   </layer>
  </group>
+ <objectgroup id="7" name="MenuButtons">
+  <object id="2" name="gragas_button" type="GragasButton" x="278.028" y="347.465">
+   <point/>
+  </object>
+ </objectgroup>
 </map>
