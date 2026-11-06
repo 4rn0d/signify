@@ -1,0 +1,12 @@
+# Garde-fou pour la racine. Le projet de reconnaissance (model/) ignore deja
+# ses donnees et ses poids dans model/.gitignore ; mais un checkout qui garde
+# ses donnees a la racine, comme la branche ulrich_POC, les montrerait ici
+# comme fichiers a ajouter. data/asl_citizen/ est sous licence de recherche
+# Microsoft : redistribution interdite, il ne doit jamais entrer dans le depot.
+/data/
+*.keras
+*.tflite
+*.h5
+*.npz
+*.task
+__pycache__/
