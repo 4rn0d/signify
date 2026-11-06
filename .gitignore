@@ -10,3 +10,6 @@
 *.npz
 *.task
 __pycache__/
+
+# Reglages d editeur, propres a chaque poste
+.vscode/
