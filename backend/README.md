@@ -1,5 +1,49 @@
 # Backend
 
+## Installation (coequipiers)
+
+Sans le serveur, l app marche quand meme : la page d entrainement affiche
+« Letter server unreachable » et le bouton « Done » valide a la main. Le
+serveur ajoute la reconnaissance automatique.
+
+**Lettres** (Windows, macOS ou Linux, pas de GPU necessaire). Le modele des
+lettres est dans le depot ; le detecteur de main de MediaPipe se telecharge
+tout seul au premier lancement (8 Mo).
+
+```
+python -m venv .venv
+.venv\Scripts\activate                  # macOS / Linux : source .venv/bin/activate
+pip install -r backend/requirements.txt
+python backend/server.py --no-words
+```
+
+**L app** demande Flutter 3.47 ou plus recent (Dart 3.13.5) ; sous Windows,
+activer le mode developpeur (`start ms-settings:developers`) sinon les plugins
+ne compilent pas.
+
+```
+cd frontend
+flutter pub get
+flutter run -d windows                  # ou macos
+```
+
+**Mots** (optionnel ; Windows ou Linux avec GPU NVIDIA). Les poids du modele
+des mots ne sont PAS dans le depot : le depot est public, et ce modele est
+entraine sur ASL Citizen (licence Microsoft Research : recherche non
+commerciale, redistribution interdite). Ils se partagent en prive :
+
+1. demander `aslc_word_model.zip` a Ulrich (Teams, cle USB... jamais sur
+   GitHub ni sur un lien public) ;
+2. le dezipper dans `model/models/` (5 fichiers `aslc_gru_rtmpose_s0_k*.keras`) ;
+3. `pip install -r model/requirements.txt` (RTMPose, onnxruntime-gpu,
+   TensorRT), puis les deux lignes de reparation onnxruntime du
+   `model/README.md` ;
+4. `python backend/server.py` (sans `--no-words`).
+
+Si les poids manquent, le serveur le dit au demarrage et sert quand meme les
+lettres. Pour refaire l archive apres un nouvel entrainement :
+`Compress-Archive model/models/aslc_gru_rtmpose_s*.keras aslc_word_model.zip`.
+
 ## Serveur des signes (`server.py`)
 
 Un serveur local qui reconnait les lettres et les mots pour l app. Chaque

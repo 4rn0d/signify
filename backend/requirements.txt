@@ -1,0 +1,13 @@
+# Serveur des LETTRES (backend/server.py --no-words), Windows, macOS ou Linux.
+# Versions de la machine ou le serveur est teste ; Python 3.11.
+#   python -m venv .venv
+#   .venv\Scripts\activate          (macOS / Linux : source .venv/bin/activate)
+#   pip install -r backend/requirements.txt
+#
+# Les MOTS demandent en plus un GPU NVIDIA et model/requirements.txt (Windows
+# ou Linux) : RTMPose sur onnxruntime-gpu, TensorRT. Voir backend/README.md.
+tensorflow==2.21.0
+keras==3.15.1
+mediapipe==1.0.1
+opencv-python==5.0.0.93
+numpy==2.4.6

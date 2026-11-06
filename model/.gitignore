@@ -17,6 +17,11 @@ data/landmarks/*
 *.keras
 *.tflite
 *.h5
+# Sauf le modele des lettres que sert backend/server.py : sans lui, l app ne
+# reconnait rien chez qui clone le depot. Entraine sur ASL Alphabet (public).
+# Le modele des mots, entraine sur ASL Citizen, reste hors du depot (public) :
+# il se partage en prive, voir backend/README.md.
+!models/alphabet/sign_model_fusion.keras
 
 # Modele MediaPipe : re-telecharge automatiquement par HandSegmenter
 # Modeles MediaPipe : telecharges automatiquement, ~10-13 Mo chacun.
