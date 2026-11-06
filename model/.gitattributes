@@ -1,0 +1,2 @@
+# Les scripts bash tournent sous WSL : une fin de ligne Windows (CRLF) les casse.
+*.sh text eol=lf

@@ -1,0 +1,15 @@
+{
+  "created": "2026-09-23T20:38:00-04:00",
+  "split": "random (INVALIDE sur ce dataset)",
+  "split_note": "Decoupage aleatoire 80/20. Les frames voisines etant quasi identiques (ecart moyen 4.7 par pixel contre 61.0 entre frames aleatoires), les voisines des images de validation se trouvaient dans le train.",
+  "val_accuracy": 0.9938,
+  "val_accuracy_is_inflated": true,
+  "honest_estimate": 0.8277,
+  "honest_estimate_note": "Meme modele et meme entrainement, mais decoupage temporel : 0.8277. L'ecart de ~0.17 est la fuite de donnees.",
+  "best_epoch": 15,
+  "epochs_run": 15,
+  "num_classes": 28,
+  "img_size": 64,
+  "batch_size": 32,
+  "keep_reason": "Conserve pour comparaison A/B a la webcam contre le modele entraine en decoupage temporel."
+}

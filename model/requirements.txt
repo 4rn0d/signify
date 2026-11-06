@@ -1,0 +1,27 @@
+tensorflow>=2.15.0
+opencv-python>=4.9.0
+mediapipe>=0.10.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+scikit-learn>=1.4.0
+pandas>=2.2.0
+
+# Detection de pose (RTMPose / RTMW) sur GPU.
+# ATTENTION : rtmlib declare une dependance au paquet `onnxruntime` CPU, qui
+# ecrase onnxruntime-gpu sans prevenir (le module Python est partage). Apres
+# toute installation, refaire :
+#   pip uninstall -y onnxruntime
+#   pip install --force-reinstall --no-deps onnxruntime-gpu==1.22.0
+# Voir README.md, section Setup.
+rtmlib>=0.0.16
+onnxruntime-gpu==1.22.0
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cuda-runtime-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cufft-cu12
+nvidia-curand-cu12
+nvidia-nvjitlink-cu12
+
+# Detecteur sur TensorRT (2.27x). 3.4 Go.
+tensorrt-cu12~=10.0

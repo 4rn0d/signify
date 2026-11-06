@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------
+# Datasets (~1.5 Go) - regenerables
+#   data/raw/       : telecharge (ASL Alphabet)
+#   data/processed/ : genere par src/alphabet/prepare_segmented_dataset.py
+# ---------------------------------------------------------------
+data/raw/*
+data/processed/*
+data/landmarks/*
+!data/**/.gitkeep
+
+# ---------------------------------------------------------------
+# Artefacts entraines - regeneres par src/alphabet/train.py (~11 min)
+# class_names.json est garde : petit et utile comme metadonnee.
+# ---------------------------------------------------------------
+# Motifs sans prefixe de dossier : "models/*.keras" ne descend pas dans
+# les sous-dossiers et laisserait passer models/archive/*.keras (18 Mo).
+*.keras
+*.tflite
+*.h5
+
+# Modele MediaPipe : re-telecharge automatiquement par HandSegmenter
+# Modeles MediaPipe : telecharges automatiquement, ~10-13 Mo chacun.
+#   hand_landmarker.task     storage.googleapis.com/mediapipe-models/hand_landmarker/...
+#   holistic_landmarker.task storage.googleapis.com/mediapipe-models/holistic_landmarker/...
+*.task
+hand_landmarker.task
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------
+# Sauvegardes / editeur
+# ---------------------------------------------------------------
+*.bak
+.vscode/
+
+# WLASL : videos et metadata. Le JSON fait 11.9 Mo et se retelecharge avec
+#   curl -sSL -o data/wlasl/WLASL_v0.3.json #     https://raw.githubusercontent.com/dxli94/WLASL/master/start_kit/WLASL_v0.3.json
+data/wlasl/
+*.partial.json
+
+# ASL Citizen : 45.9 Go, licence Microsoft Research (recherche non commerciale,
+# redistribution interdite, donnees a detruire en fin de recherche). Ne doit
+# donc JAMAIS entrer dans le depot, meme partiellement. Se retelecharge avec
+#   curl -L -C - -o data/asl_citizen/ASL_Citizen.zip \
+#     https://download.microsoft.com/download/b/8/8/b88c0bae-e6c1-43e1-8726-98cf5af36ca4/ASL_Citizen.zip
+data/asl_citizen/
+
+# ASL-LEX 2.0 (CC BY-NC 4.0) : frequences d usage des signes, sert a choisir le
+# vocabulaire. Se retelecharge depuis https://osf.io/zpha4/ (signdata.csv).
+data/asl_lex/
