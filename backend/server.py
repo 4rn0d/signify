@@ -107,6 +107,20 @@ class WordRecognizer:
     """
 
     def __init__(self):
+        # Le depot est public : les poids du modele des mots, entraines sur
+        # ASL Citizen, n y sont pas et se partagent en prive. On le dit
+        # clairement AVANT de charger RTMPose et le GPU, dont l echec donnerait
+        # un message bien moins parlant sur une machine sans ces poids.
+        card = os.path.join(MODEL, "models", "aslc_gru_rtmpose.meta.json")
+        with open(card, encoding="utf-8") as handle:
+            weights = [os.path.join(MODEL, p) for p in json.load(handle)["models"]]
+        missing = [os.path.basename(p) for p in weights if not os.path.exists(p)]
+        if missing:
+            raise RuntimeError(
+                f"poids du modele des mots absents ({', '.join(missing)}) : "
+                f"dezipper aslc_word_model.zip dans model/models/ (archive "
+                f"partagee en prive, voir backend/README.md)")
+
         sys.path.insert(0, os.path.join(MODEL, "src", "core"))
         import webcam_demo_rtm as word_demo
 
