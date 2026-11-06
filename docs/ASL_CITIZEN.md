@@ -750,11 +750,16 @@ In rough order of when they block something:
    a k-fold question: with and without them.
 5. **Pointing signs** in the confusion matrix, as predicted in §3.
 6. **Display merged twins** (`EAT1`/`EAT2` shown as "EAT"). Not built.
-7. **Rebuild the shipped model** on ASL Citizen. `train_final.py` does not yet
-   have `--readout`, `--layer-norm` or the baseline's `--gate-pretrain`
-   default: as is, it would build the last-state GRU that never leaves chance
-   here. It must also train for the same budget as the k-fold that measures
-   it, since its snapshots sit in the last 30 epochs. The demo will then follow the
+7. **Rebuild the shipped model** on ASL Citizen. `train_final.py` now defaults
+   to the baseline's recipe (`--readout attention`, `--gate-pretrain`, 60
+   pretraining epochs), cites `models/aslc_kfold_baseline.json`, and refuses
+   to start when its options differ from the recipe the cited k-fold measured
+   (so a mismatch costs seconds, not an hour). It stops after 10 pretraining
+   epochs if accuracy is still under 5x chance: a collapsed GRU, as in fold 5.
+   A first 1-seed model is for live testing (3 November); the full ensemble
+   is `--seeds 5`. For testing, `src/asl_citizen/make_sign_sheet.py` writes a
+   local page of the target signs, two ASL Citizen clips each, never to be
+   shared (license). The demo will then follow the
    new card on its own.
 8. **The signers' brief (`RECORDING.md`) is obsolete**: it describes the 50
    WLASL words and WLASL variants. It needs the new vocabulary and new reference

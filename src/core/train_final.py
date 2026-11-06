@@ -81,6 +81,7 @@ META_PATH = os.path.join(MODELS_DIR, "wlasl", "wlasl_gru.meta.json")
 # Citer wlasl_kfold_shape8 (0.5998) serait pire : c est l opposition SANS la
 # pile, donc une sous-estimation d environ 8 points.
 KFOLD_PATH = os.path.join(MODELS_DIR, "wlasl", "wlasl_kfold_best_4folds.json")
+ASLC_KFOLD_PATH = os.path.join(MODELS_DIR, "aslc_kfold_baseline.json")
 KFOLD_CAVEAT = (
     "mesure sur 4 des 5 folds, au MEME pre-entrainement que ce modele "
     "(300 gloses, 120 epochs) mais a 3 graines au lieu de 5. Le fold 5 a ete "
@@ -240,13 +241,15 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
     raw_dim = len(keep_columns) if keep_columns is not None else features.shape[2]
     model = build_model(num_classes, args.units, feature_dim,
                         args.cell, args.label_smoothing, args.project,
-                        raw_dim=raw_dim)
+                        raw_dim=raw_dim, readout=args.readout,
+                        layer_norm=args.layer_norm)
 
     if pretrain is not None:
         pre_x, pre_y, pre_classes = pretrain
         head = build_model(pre_classes, args.units, feature_dim,
                            args.cell, args.label_smoothing, args.project,
-                           raw_dim=raw_dim)
+                           raw_dim=raw_dim, readout=args.readout,
+                           layer_norm=args.layer_norm)
 
         for index in range(args.pretrain_epochs):
             order = rng.permutation(len(pre_x))
@@ -256,10 +259,21 @@ def train_one(seed, features, labels, num_classes, args, pretrain=None,
                 target = tf.keras.utils.to_categorical(target, pre_classes)
             history = head.fit(batch, target, batch_size=args.batch,
                                epochs=1, verbose=0)
-            if (index + 1) % 40 == 0:
+            accuracy = history.history["accuracy"][0]
+            if (index + 1) % 10 == 0:
                 print(f"    pre-entrainement {index + 1}/"
-                      f"{args.pretrain_epochs}  "
-                      f"acc {history.history['accuracy'][0]:.3f}", flush=True)
+                      f"{args.pretrain_epochs}  acc {accuracy:.3f}", flush=True)
+            # Le fold 5 de la baseline ASL Citizen est reste au hasard pendant
+            # tout son pre-entrainement (0.004 a e60, pour 0.72-0.76 ailleurs),
+            # et l affinage qui en partait predisait une seule classe. Un
+            # modele livre dans cet etat ne reconnaitrait rien : on s arrete
+            # des que c est visible plutot qu apres une heure de calcul.
+            if index + 1 == 10 and accuracy < 5.0 / pre_classes:
+                raise SystemExit(
+                    f"pre-entrainement effondre (acc {accuracy:.4f} a 10 "
+                    f"epochs, hasard {1 / pre_classes:.4f}) : le GRU s est "
+                    f"sature, voir build_model. Relancer avec une autre --seed, "
+                    f"ou --layer-norm.")
 
         # Tout sauf la couche de sortie, dont le nombre de classes differe.
         for target_layer, source_layer in zip(model.layers[:-1], head.layers[:-1]):
@@ -354,12 +368,25 @@ def main():
     parser.add_argument("--pretrain-vocab", type=int, default=400,
                         help="les N premiers signes, cible comprise : rangs "
                              "1 a 400 pour ASL Citizen")
-    parser.add_argument("--pretrain-epochs", type=int, default=120)
-    parser.add_argument("--gate-pretrain", action="store_true", default=False,
-                        help="filtrer l echafaudage aussi. Defaut NON, parce "
-                             "que train_kfold ne l a jamais fait : l activer "
-                             "rendrait ce modele different de la configuration "
-                             "mesuree, dans une direction non mesuree.")
+    parser.add_argument("--pretrain-epochs", type=int, default=60,
+                        help="60 pour la baseline ASL Citizen ; le modele WLASL "
+                             "livre en avait 120")
+    parser.add_argument("--gate-pretrain", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="filtrer l echafaudage comme la cible. Oui pour la "
+                             "baseline ASL Citizen : non filtrees, 6%% de ses "
+                             "frames portent des mains repliees aux coordonnees "
+                             "absurdes. Le modele WLASL livre etait entraine "
+                             "sans (--no-gate-pretrain).")
+    parser.add_argument("--readout", default="attention",
+                        choices=("last", "mean", "attention"),
+                        help="comment le GRU rend sa reponse. 'attention' pour "
+                             "ASL Citizen : l etat final y arrive apres ~18 "
+                             "frames de repos et ne sort pas du hasard. Le "
+                             "modele WLASL livre utilisait 'last'.")
+    parser.add_argument("--layer-norm", action="store_true",
+                        help="LayerNormalization avant le GRU (voir "
+                             "build_model) ; pas dans la baseline")
     parser.add_argument("--pretrain-variants", default="all",
                         choices=("", "all", "dominant", "split"),
                         help="filtrage des variantes de l echafaudage seul. "
@@ -495,6 +522,46 @@ def main():
     extractor = ("rtmpose" if "rtm" in args.features_dir or dataset == "aslc"
                  else "mediapipe")
 
+    # La fiche cite une mesure, et seulement une mesure faite sur les memes
+    # features ET avec la meme recette. Verifie AVANT d entrainer : une
+    # recette qui differe se decouvrait sinon apres une heure de calcul.
+    kfold = None
+    kfold_path = args.kfold
+    if kfold_path is None:
+        kfold_path = ASLC_KFOLD_PATH if dataset == "aslc" else KFOLD_PATH
+    if kfold_path and os.path.exists(kfold_path):
+        with open(kfold_path, encoding="utf-8") as handle:
+            kfold = json.load(handle)
+        measured_on = kfold.get("features_dir")
+        here = os.path.relpath(args.features_dir, PROJECT_ROOT)
+        if measured_on is not None and os.path.normpath(measured_on) != os.path.normpath(here):
+            raise SystemExit(
+                f"{kfold_path} a ete mesure sur {measured_on}, ce modele est "
+                f"entraine sur {here} : la fiche citerait la precision d un "
+                f"autre modele.")
+        mine = {"cell": args.cell, "epochs": args.epochs, "units": args.units,
+                "project": args.project, "rich": bool(args.rich),
+                "confidence": bool(args.confidence),
+                "handshape_full": bool(args.handshape_full),
+                "label_smoothing": args.label_smoothing, "vocab": args.vocab,
+                "pretrain_vocab": args.pretrain_vocab,
+                "pretrain_epochs": args.pretrain_epochs,
+                "gate_pretrain": bool(args.gate_pretrain), "gate": args.gate,
+                "gate_inside": args.gate_inside,
+                "gate_conflict": bool(args.gate_conflict),
+                "gate_soft": bool(args.gate_soft), "readout": args.readout,
+                "layer_norm": bool(args.layer_norm)}
+        # Seulement ce que le k-fold enregistre : les anciens resultats WLASL
+        # ne portent pas ces cles.
+        differs = {k: (kfold[k], v) for k, v in mine.items()
+                   if k in kfold and kfold[k] != v}
+        if differs:
+            raise SystemExit(
+                f"{kfold_path} mesure une autre recette que celle-ci : "
+                + ", ".join(f"{k} {a!r} la-bas, {b!r} ici"
+                            for k, (a, b) in differs.items())
+                + ". Passer les memes options, ou --kfold vers la bonne mesure.")
+
     saved = []
     for seed_index in range(args.seeds):
         print(f"  graine {seed_index + 1}/{args.seeds}")
@@ -508,24 +575,11 @@ def main():
                   len(glosses), args, pretrain, keep_columns, layout,
                   on_snapshot=keep_snapshot)
 
-    # La fiche cite une mesure, et seulement une mesure faite sur les memes
-    # features. Avant ce garde-fou, elle citait TOUJOURS le k-fold WLASL : un
-    # modele ASL Citizen serait parti en annoncant 0.7623, chiffre mesure sur
-    # un autre jeu de donnees.
+    # Avant le garde-fou du dossier, la fiche citait TOUJOURS le k-fold
+    # WLASL : un modele ASL Citizen serait parti en annoncant 0.7623, chiffre
+    # mesure sur un autre jeu de donnees.
     expected = None
-    kfold_path = args.kfold
-    if kfold_path is None and "wlasl" in os.path.normpath(args.features_dir):
-        kfold_path = KFOLD_PATH
-    if kfold_path and os.path.exists(kfold_path):
-        with open(kfold_path, encoding="utf-8") as handle:
-            kfold = json.load(handle)
-        measured_on = kfold.get("features_dir")
-        here = os.path.relpath(args.features_dir, PROJECT_ROOT)
-        if measured_on is not None and os.path.normpath(measured_on) != os.path.normpath(here):
-            raise SystemExit(
-                f"{kfold_path} a ete mesure sur {measured_on}, ce modele est "
-                f"entraine sur {here} : la fiche citerait la precision d un "
-                f"autre modele.")
+    if kfold is not None:
         # per_fold_plateau, jamais per_fold : le second est la derniere epoch,
         # et confondre les deux a deja produit un resultat de signe faux
         # (section 7.6).
@@ -549,6 +603,8 @@ def main():
             "stgcn": "ensemble de ST-GCN sur les 51 articulations du squelette",
         }[args.cell] + " sur sequences de landmarks",
         "cell": args.cell,
+        "readout": args.readout,
+        "layer_norm": bool(args.layer_norm),
         "device": device,
         "models": [path for path, _ in saved],
         "snapshot_epochs": [epoch for _, epoch in saved],
