@@ -52,29 +52,28 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyCtFIlgjTcu-J-xuet_RgVO-KzRoQ9s6NQ',
-    appId: '1:154860143482:android:ea7a8a0b884fc014dd0cc3',
+    appId: '1:154860143482:android:2cc2438a0232e2b6dd0cc3',
     messagingSenderId: '154860143482',
     projectId: 'signify-d70ad',
     storageBucket: 'signify-d70ad.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDhWJFxqYeIVi1sfVdwaO-7lEIY6oF5yNc',
-    appId: '1:154860143482:ios:d5590823875ea82edd0cc3',
+    appId: '1:154860143482:ios:d258a6acd13e390cdd0cc3',
     messagingSenderId: '154860143482',
     projectId: 'signify-d70ad',
     storageBucket: 'signify-d70ad.firebasestorage.app',
-    iosBundleId: 'com.signifyUDES2026.frontend',
+    iosBundleId: 'com.signifyUDES2026.gragus',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyDhWJFxqYeIVi1sfVdwaO-7lEIY6oF5yNc',
-    appId: '1:154860143482:ios:bdf7fffdd94e7176dd0cc3',
+    appId: '1:154860143482:ios:d258a6acd13e390cdd0cc3',
     messagingSenderId: '154860143482',
     projectId: 'signify-d70ad',
     storageBucket: 'signify-d70ad.firebasestorage.app',
-    iosBundleId: 'com.signifyUDES2026.frontend',
+    iosBundleId: 'com.signifyUDES2026.gragus',
   );
+
   static const FirebaseOptions windows = FirebaseOptions(
     apiKey: 'AIzaSyCDjSVZF3KfEBZk4PiTCNrAJo1-s4TOOIY',
     appId: '1:154860143482:web:c69141461b97bcd7dd0cc3',
