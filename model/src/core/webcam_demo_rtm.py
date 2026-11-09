@@ -1,0 +1,684 @@
+"""Demo webcam pour la reconnaissance de mots, features RTMPose.
+
+Meme principe que webcam_demo_words.py : on enregistre une fenetre de ~2.8 s
+a la demande, puis on classe la sequence entiere. On ne classe pas en
+continu, car segmenter un flux de signes est un probleme a part — savoir OU
+commence et finit un signe est plus dur que de reconnaitre le signe.
+
+Point critique : les features viennent de frame_features() importee de
+extract_rtmpose.py, la fonction meme qui a produit l entrainement. Les
+reimplementer ici reintroduirait le bug qui, sur l alphabet, faisait tomber
+la precision de 0.985 a 0.384. Tout ce qui decide de ce que le modele voit —
+seuil de confiance a 0.7, filtre hors-cadre, arbitrage des mains inventees —
+est donc applique par cette fonction partagee, pas recopie.
+
+L inference tourne sur l image NON retournee. Sur une image miroir RTMPose
+voit une personne inversee et echange ses etiquettes gauche/droite, et
+l extraction ne retournait rien : on deduit d abord, on retourne ensuite
+l image ET les coordonnees x pour l affichage. webcam_demo_words.py retourne
+AVANT d extraire, ce qui lui donne une incoherence entrainement/inference que
+seule l augmentation par miroir rend supportable.
+
+Precision attendue : 0.6675 +- 0.0507 en top-1 sur 50 classes (hasard 0.02),
+soit 33x le hasard, mesuree en validation croisee par signeur. Ce chiffre
+vient de signeurs DU DATASET : sur une personne nouvelle, devant une webcam,
+attendez nettement moins — les clips WLASL et une webcam en gros plan ne se
+ressemblent pas (docs/WLASL.md section 7.7).
+"""
+
+import json
+import os
+import sys
+import threading
+import time
+from collections import deque
+
+import cv2
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from gpu_setup import enable_cuda_dlls, enable_tensorrt_dlls
+
+enable_cuda_dlls()
+
+import tensorflow as tf
+
+import extract_rtmpose
+from extract_rtmpose import (
+    FEATURE_DIM,
+    LEFT_HAND,
+    RIGHT_HAND,
+    POSE_KEYPOINTS,
+    COCO_LEFT_SHOULDER,
+    COCO_RIGHT_SHOULDER,
+    frame_features,
+    hand_confidences,
+)
+from train_kfold import (MAX_LEN, Layout, add_handshape, add_rich_features,
+                         gate_hands, mirror, pad_sequence)
+import timebase
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# La fiche ASL Citizen remplace la fiche WLASL des qu elle existe : c est le
+# modele de la phase en cours. --card force l une ou l autre.
+CARDS = [os.path.join(PROJECT_ROOT, "models", "aslc_gru_rtmpose.meta.json"),
+         os.path.join(PROJECT_ROOT, "models", "wlasl", "wlasl_gru_rtmpose.meta.json")]
+META_PATH = next((c for c in CARDS if os.path.exists(c)), CARDS[-1])
+
+RECORD_SECONDS = 2.8
+TOP_K = 5
+HOLD_FRAMES = 6
+
+# Cadence des videos du dataset : mediane 30.0 fps (58% a 29.97, 11% a 23.98,
+# min 20, max 30.4). L extraction ne reechantillonne pas, elle prend les
+# frames consecutives a la cadence du fichier, donc le modele a appris des
+# signes vus a ~30 images par seconde.
+#
+# La webcam, elle, avance a la vitesse du traitement : ~29 fps quand le GPU
+# est libre, bien moins s il est occupe. Or le modele ne connait pas le temps,
+# seulement le nombre de frames : a 15 fps un signe de 2.8 s arrive en 42
+# frames et se lit comme un signe deux fois plus rapide. L augmentation par
+# time_warp ne couvre que 0.8 a 1.25x, soit 24 a 37 fps.
+#
+# On enregistre donc l HORODATAGE de chaque frame et on ramene la sequence sur
+# une grille a 30 fps avant de classer.
+TARGET_FPS = 30.0
+
+HAND_LINKS = [
+    (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
+    (0, 9), (9, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15),
+    (15, 16), (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17),
+]
+# Indices DANS la liste POSE_KEYPOINTS = [nez, epG, epD, coudeG, coudeD,
+# poignetG, poignetD, hancheG, hancheD].
+POSE_LINKS = [(1, 2), (1, 3), (3, 5), (2, 4), (4, 6), (1, 7), (2, 8), (7, 8)]
+
+COLOR_BONE = (150, 220, 140)
+COLOR_JOINT = (60, 90, 235)
+COLOR_POSE = (210, 180, 90)
+COLOR_REC = (60, 60, 240)
+COLOR_OK = (120, 210, 90)
+COLOR_DIM = (160, 160, 160)
+
+
+def load_model():
+    """Charge l ensemble et rend une fonction de prediction.
+
+    Trois choses doivent correspondre exactement a l entrainement :
+
+    - la disposition des colonnes. Elle est construite a la main d apres la
+      fiche, jamais devinee : 106 colonnes se lisent aussi bien comme 9
+      points de pose plus 2 confiances que comme 10 points de pose, et le
+      mauvais choix ferait negater une confiance au miroir sans erreur.
+    - la moyenne sur les 3 modeles de l ensemble.
+    - la moyenne avec l image miroir (TTA), appliquee sur la disposition
+      brute, avant les features derivees.
+    """
+    if not os.path.exists(META_PATH):
+        raise SystemExit(
+            f"Fiche absente : {META_PATH}\n"
+            "Lance d abord : python src/core/train_final.py"
+        )
+
+    with open(META_PATH, encoding="utf-8") as handle:
+        meta = json.load(handle)
+
+    if meta.get("extractor") != "rtmpose":
+        raise SystemExit(
+            f"Cette fiche a ete produite avec '{meta.get('extractor')}', pas "
+            f"rtmpose. Utilise webcam_demo_words.py pour un modele MediaPipe."
+        )
+
+    paths = [os.path.join(PROJECT_ROOT, p) for p in meta["models"]]
+    missing = [p for p in paths if not os.path.exists(p)]
+    if missing:
+        raise SystemExit("Modeles absents : " + ", ".join(missing))
+
+    models = [tf.keras.models.load_model(p) for p in paths]
+    rich = meta.get("rich", False)
+    confidence = meta.get("confidence", False)
+    handshape = meta.get("handshape", False)
+    handshape_full = meta.get("handshape_full", False)
+    width = 26 if handshape_full else 8
+
+    tail = 2 if confidence else 0
+    layout = Layout.from_dim(FEATURE_DIM)
+    layout.tail = tail
+
+    expected = (FEATURE_DIM + tail + (23 if rich else 0)
+                + (width if handshape else 0))
+    if expected != meta["feature_dim"]:
+        raise SystemExit(
+            f"La fiche annonce {meta['feature_dim']} dimensions, ce code en "
+            f"produirait {expected}. L extraction et la demo ont divergé."
+        )
+
+    # Chaque modele est enveloppe dans une tf.function : sans cela chaque
+    # appel repasse par le mode eager de Keras, ce qui coutait 1663 ms pour
+    # les 6 passes (3 modeles x 2 vues) et gelait l image apres chaque
+    # enregistrement. Le graphe est trace une fois, au chargement.
+    forwards = []
+    for model in models:
+        @tf.function(reduce_retracing=True)
+        def forward(batch, _model=model):
+            return _model(batch, training=False)
+        forwards.append(forward)
+
+    def predict(padded):
+        """padded : (MAX_LEN, 104 + queue), disposition brute."""
+        batch = np.stack([padded, mirror(padded[None, ...], layout)[0]])
+
+        # MEME ORDRE qu a l entrainement : rich puis handshape. La
+        # verification de dimension ci-dessus n attraperait pas une
+        # inversion, seulement un total faux.
+        pieces = []
+        if rich:
+            pieces.append(add_rich_features(batch, layout)[:, :, -23:])
+        if handshape:
+            pieces.append(add_handshape(batch, layout,
+                                        full=handshape_full)[:, :, -width:])
+        if pieces:
+            batch = np.concatenate([batch] + pieces, axis=-1)
+
+        tensor = tf.constant(batch, dtype=tf.float32)
+
+        total = None
+        for forward in forwards:
+            probabilities = forward(tensor).numpy()
+            total = probabilities if total is None else total + probabilities
+
+        # somme sur les modeles ET sur les deux vues
+        return total.sum(axis=0) / (len(models) * 2)
+
+    # Trace les graphes maintenant, sinon la premiere classification paierait
+    # la compilation en pleine utilisation.
+    predict(np.zeros((MAX_LEN, FEATURE_DIM + tail), dtype=np.float32))
+
+    return predict, meta, layout, confidence
+
+
+class Source:
+    """Produit les features, exactement comme l entrainement.
+
+    "Comme l entrainement" et non "comme l extraction" : le dossier de
+    features a ete extrait en mode BRUT, et c est gate_hands() qui a ensuite
+    decide quelles mains le modele voyait. Reproduire le filtrage interne de
+    l extracteur donnerait une autre entree sur les frames en conflit, ou sa
+    regle differe (revendication du poignet contre confiance la plus faible).
+
+    Le squelette rendu pour l affichage est en PIXELS et dans le repere de
+    l image non retournee ; c est l appelant qui le retourne.
+    """
+
+    def __init__(self, mode="balanced", with_confidence=True, layout=None,
+                 gate=None, tensorrt=False):
+        from rtmlib import Wholebody
+
+        self.model = Wholebody(mode=mode, backend="onnxruntime", device="cuda")
+        if tensorrt:
+            use_tensorrt(self.model)
+        self.with_confidence = with_confidence
+        self.provider = self.model.pose_model.session.get_providers()[0]
+        self.layout = layout
+        self.gate = gate or {}
+
+        if self.gate.get("raw_features"):
+            # L extracteur ecrit les deux mains sans rien ecarter, comme lors
+            # de la constitution du dossier de features.
+            extract_rtmpose.RAW_MODE = True
+            # Le drapeau de conflit a ete calcule, a l extraction, avec CE
+            # seuil et non avec celui du filtrage : les deux valent 0.7
+            # aujourd hui, ce qui est exactement pourquoi il faut les
+            # distinguer — rien ne signalerait leur divergence.
+            threshold = self.gate.get("extraction_threshold")
+            if threshold is not None:
+                extract_rtmpose.HAND_SCORE_THRESHOLD = float(threshold)
+
+    def process(self, frame):
+        height, width = frame.shape[:2]
+        keypoints, scores = self.model(frame)
+
+        dim = FEATURE_DIM + (2 if self.with_confidence else 0)
+
+        if len(keypoints) == 0:
+            return np.zeros(dim, dtype=np.float32), None, False
+
+        points = np.asarray(keypoints)[0]
+        confidence = np.asarray(scores)[0]
+
+        vector, found = frame_features(points, confidence, width, height)
+        hand_score = np.asarray(hand_confidences(confidence), dtype=np.float32)
+        if self.with_confidence:
+            vector = np.concatenate([vector, hand_score])
+
+        if self.gate.get("raw_features"):
+            # MEME fonction, MEMES parametres qu a l entrainement. Le
+            # filtrage est par frame des deux cotes : le k-fold l applique a
+            # un tableau deja rembourre, dont les frames de remplissage ont
+            # une confiance nulle et sont donc ecartees de la meme facon.
+            vector = gate_hands(
+                vector[None, None, :], self.layout,
+                hand_score[None, None, :],
+                # getattr avec les MEMES valeurs par defaut que la boucle
+                # d extraction : frame_features sort avant de les poser quand
+                # les epaules manquent, et le dossier de features porte donc
+                # la meme approximation. Sans effet sur le vecteur, nul dans
+                # ce cas, mais le chemin reste identique.
+                np.asarray(getattr(frame_features, "last_inside", (0.0, 0.0)),
+                           dtype=np.float32)[None, None, :],
+                np.array([[getattr(frame_features, "last_conflict", False)]],
+                         dtype=bool),
+                threshold=self.gate.get("gate", 0.0),
+                soft=self.gate.get("gate_soft", False),
+                inside_threshold=self.gate.get("gate_inside", 0.0),
+                use_conflict=self.gate.get("gate_conflict", False),
+            )[0, 0]
+
+        # Ce qui est DESSINE suit ce que le modele voit : les drapeaux de
+        # presence sont lus dans le vecteur FILTRE, donc une main ecartee par
+        # le seuil, le hors-cadre ou l arbitrage n apparait pas a l ecran.
+        flags = vector[FEATURE_DIM - len(POSE_KEYPOINTS) * 2 - 2:
+                       FEATURE_DIM - len(POSE_KEYPOINTS) * 2]
+        drawable = {
+            "pose": points[POSE_KEYPOINTS],
+            "left": points[LEFT_HAND] if flags[0] > 0.5 else None,
+            "right": points[RIGHT_HAND] if flags[1] > 0.5 else None,
+        }
+        return vector, drawable, found
+
+
+class Smoother:
+    """Garde la derniere main vue quelques frames, POUR L AFFICHAGE SEUL.
+
+    A seuil 0.7 une main n est retenue que dans ~57% des frames, donc le
+    squelette clignote et donne l impression d un suivi rate. Ce lissage ne
+    touche jamais les features : une main ecartee doit rester ecartee, sinon
+    la demo nourrirait le modele de positions inventees.
+    """
+
+    def __init__(self):
+        self.last = {"pose": None, "left": None, "right": None}
+        self.age = {"pose": 0, "left": 0, "right": 0}
+
+    def update(self, drawable):
+        if drawable is None:
+            drawable = {"pose": None, "left": None, "right": None}
+
+        shown = {}
+        for key, value in drawable.items():
+            if value is not None:
+                self.last[key] = value
+                self.age[key] = 0
+                shown[key] = value
+            elif self.last[key] is not None and self.age[key] < HOLD_FRAMES:
+                self.age[key] += 1
+                shown[key] = self.last[key]
+            else:
+                shown[key] = None
+        return shown
+
+
+def draw_skeleton(frame, shown, width):
+    def flip(point):
+        return (int(width - point[0]), int(point[1]))
+
+    pose = shown.get("pose")
+    if pose is not None:
+        for a, b in POSE_LINKS:
+            cv2.line(frame, flip(pose[a]), flip(pose[b]), COLOR_POSE, 2, cv2.LINE_AA)
+
+    for key in ("left", "right"):
+        hand = shown.get(key)
+        if hand is None:
+            continue
+        points = [flip(p) for p in hand]
+        for a, b in HAND_LINKS:
+            cv2.line(frame, points[a], points[b], COLOR_BONE, 2, cv2.LINE_AA)
+        for index, point in enumerate(points):
+            cv2.circle(frame, point, 5 if index == 0 else 3, COLOR_JOINT, -1, cv2.LINE_AA)
+
+
+def draw_panel(frame, lines, title=None):
+    height, width = frame.shape[:2]
+    panel_height = 34 + 30 * len(lines) + (28 if title else 0)
+    top = height - panel_height
+
+    region = frame[top:height, 0:width]
+    cv2.addWeighted(np.full_like(region, 22), 0.65, region, 0.35, 0, region)
+    cv2.line(frame, (0, top), (width, top), COLOR_BONE, 1)
+
+    y = top + 26
+    if title:
+        cv2.putText(frame, title, (14, y), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, COLOR_DIM, 1, cv2.LINE_AA)
+        y += 28
+    for text, colour, scale in lines:
+        cv2.putText(frame, text, (14, y), cv2.FONT_HERSHEY_SIMPLEX,
+                    scale, colour, 2, cv2.LINE_AA)
+        y += 30
+
+
+def resample(samples, target_fps=TARGET_FPS):
+    """(horodatage, vecteur) -> sequence a cadence fixe.
+
+    Par PLUS PROCHE VOISIN, jamais par interpolation. L extraction
+    sous-echantillonne les clips longs en choisissant des frames existantes
+    (`wanted[int(i * step)]`), elle n invente aucune position intermediaire ;
+    interpoler ici creerait des coordonnees que le modele n a jamais vues.
+    Mesure a l appui : combler des trous par interpolation lineaire coutait
+    1.4 point (docs/WLASL.md 7.5b).
+
+    Quand la webcam tourne plus lentement que la cible, des frames sont
+    repetees : la trajectoire est saccadee mais sa DUREE est juste, ce qui
+    est le defaut le moins grave des deux.
+    """
+    stamps = np.array([t for t, _ in samples], dtype=np.float64)
+    vectors = np.array([v for _, v in samples], dtype=np.float32)
+    # La logique vit dans timebase, que l entrainement importe aussi : deux
+    # copies de ce calcul finiraient par diverger.
+    return vectors[timebase.resample_indices(stamps, target_fps)]
+
+
+def use_tensorrt(model):
+    """Remplace la session du DETECTEUR par une session TensorRT.
+
+    Le detecteur pese 40 des 62 ms par frame ; le modele de pose n en prend
+    que 8.4 et reste donc sur CUDA, ce qui a l avantage de le laisser
+    exactement comme a l extraction des features d entrainement.
+
+    Le TopK de YOLOX est exclu : TensorRT ne sait pas le construire au-dela
+    de K=3840. Il retombe sur CUDA, pour un cout negligeable.
+
+    Derive mesuree par rapport au pipeline d entrainement : 4.4% des frames
+    bougent de plus de 0.1 largeur d epaules, moyenne 0.035, aucune decision
+    de filtrage changee sur 810 mains. A comparer a YOLOX-tiny, 28.4%.
+    """
+    import onnxruntime as ort
+
+    directories = enable_tensorrt_dlls()
+    if not directories:
+        print("  TensorRT introuvable (pip install tensorrt-cu12) ; on reste "
+              "sur CUDA")
+        return False
+
+    cache = os.path.join(os.path.expanduser("~"), ".cache", "rtmlib", "trt")
+    os.makedirs(cache, exist_ok=True)
+
+    detector = model.det_model
+    try:
+        session = ort.InferenceSession(detector.onnx_model, providers=[
+            ("TensorrtExecutionProvider", {
+                "trt_engine_cache_enable": True,
+                "trt_engine_cache_path": cache,
+                "trt_timing_cache_enable": True,
+                "trt_fp16_enable": False,
+                # TensorRT echoue sur ce noeud : "K exceeds the maximum value
+                # allowed (3840)". Exclu, il reste sur CUDA.
+                "trt_op_types_to_exclude": "TopK",
+            }),
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ])
+    except Exception as error:
+        print(f"  TensorRT a echoue ({type(error).__name__}) ; on reste sur CUDA")
+        return False
+
+    used = session.get_providers()[0]
+    if used != "TensorrtExecutionProvider":
+        print(f"  TensorRT annonce mais {used} utilise ; on reste sur CUDA")
+        return False
+
+    detector.session = session
+    print("  detecteur sur TensorRT (premiere execution : compilation du "
+          "moteur, ~1 min)")
+    return True
+
+
+class Camera:
+    """Webcam lue dans un thread, pour recouvrir la lecture et la detection.
+
+    cap.read() bloque jusqu a la frame suivante : enchaine avec un detecteur
+    a 40 ms, les deux couts s additionnent (33.8 + 40 = 73.8 ms, soit 13 fps)
+    alors qu ils peuvent se recouvrir. Le thread lit en continu, la boucle
+    prend la derniere frame disponible, et le plafond redevient celui du
+    detecteur seul.
+
+    Aucune feature ne change : c est le meme calcul sur les memes images.
+    """
+
+    def __init__(self, index):
+        self.capture = cv2.VideoCapture(index)
+        self.lock = threading.Lock()
+        self.latest = None          # (numero, horodatage de capture, image)
+        self.count = 0
+        self.running = self.capture.isOpened()
+        self.thread = threading.Thread(target=self._read_forever, daemon=True)
+        if self.running:
+            self.thread.start()
+
+    def opened(self):
+        return self.capture.isOpened()
+
+    def _read_forever(self):
+        while self.running:
+            ok, frame = self.capture.read()
+            if not ok:
+                self.running = False
+                break
+            # L horodatage est pris ICI, a la capture : c est lui que
+            # resample() utilise, et le prendre apres traitement decalerait
+            # chaque echantillon de la duree variable du detecteur.
+            with self.lock:
+                self.count += 1
+                self.latest = (self.count, time.time(), frame)
+
+    def grab(self, after=-1, timeout=2.0):
+        """La premiere frame plus recente que `after`, ou None si la camera meurt.
+
+        Jamais deux fois la meme : traiter une frame deja vue ajouterait un
+        doublon a la sequence, et les doublons sont exactement ce que la
+        cadence basse produisait deja.
+        """
+        deadline = time.time() + timeout
+        while True:
+            with self.lock:
+                latest = self.latest
+            if latest is not None and latest[0] > after:
+                return latest
+            if not self.running or time.time() > deadline:
+                return None
+            time.sleep(0.001)
+
+    def release(self):
+        self.running = False
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        self.capture.release()
+
+
+def model_input(samples, centred=False):
+    """Les 80 frames que le modele lira, a partir de l enregistrement.
+
+    centred : la fiche vient d un modele entraine sur des fenetres centrees
+    sur le signe (timebase). On applique alors la MEME regle a
+    l enregistrement : grille a 30 fps, puis 80 frames autour du mouvement,
+    completees en repetant les bords. Sinon, l ancien comportement : les 80
+    frames du milieu, pour les modeles entraines ainsi.
+    """
+    sequence = resample(samples)
+    if centred:
+        return sequence[timebase.window_indices(sequence)]
+    return pad_sequence(np.asarray(sequence, dtype=np.float32))
+
+
+def classify(predict, samples, classes, centred=False):
+    padded = model_input(samples, centred)
+    probabilities = predict(padded)
+    order = np.argsort(probabilities)[::-1][:TOP_K]
+    return [(classes[i], float(probabilities[i])) for i in order]
+
+
+def run(camera=0, mode="balanced", tensorrt=None):
+    predict, meta, layout, confidence = load_model()
+    classes = meta["classes"]
+    expected = meta.get("expected_accuracy") or {}
+
+    # La fiche dit comment le modele a ete entraine ; la demo s y conforme.
+    # Un modele appris sur des fenetres centrees sur le signe recoit un
+    # enregistrement plus long, dans lequel on centre la fenetre de la meme
+    # facon. Un modele appris sur des features TensorRT doit voir des
+    # features TensorRT : sur CUDA, 4.4% des frames divergent.
+    centred = bool(meta.get("timebase"))
+    record_seconds = float(meta.get("record_seconds", RECORD_SECONDS))
+    trained_on = meta.get("detector", "cuda")
+    if tensorrt is None:
+        tensorrt = trained_on == "tensorrt"
+
+    source = Source(mode=mode, with_confidence=confidence, layout=layout,
+                    tensorrt=tensorrt,
+                    gate={key: meta.get(key) for key in
+                          ("raw_features", "gate", "gate_inside",
+                           "gate_conflict", "gate_soft",
+                           "extraction_threshold")})
+    print(f"RTMPose {mode} | {source.provider}")
+    if source.provider != "CUDAExecutionProvider":
+        print("  ATTENTION : CPU, environ 20x plus lent")
+    detector_now = source.model.det_model.session.get_providers()[0]
+    if trained_on == "tensorrt" and detector_now != "TensorrtExecutionProvider":
+        print("  ATTENTION : modele entraine sur des features TensorRT, mais le "
+              f"detecteur tourne sur {detector_now} : ~4% des frames different "
+              "de l entrainement")
+    print(f"Enregistrement {record_seconds:.1f} s, fenetre "
+          f"{'centree sur le signe' if centred else 'au milieu'}")
+    print(f"Modele : {meta['num_classes']} signes, {meta['feature_dim']} dimensions, "
+          f"precision attendue {expected.get('mean', '?')} "
+          f"(+-{expected.get('std', '?')}, validation croisee par signeur)")
+    print("ESPACE : enregistrer  |  l : squelette  |  q : quitter")
+    print(f"\nSignes connus :\n  {', '.join(classes)}\n")
+
+    capture = Camera(camera)
+    if not capture.opened():
+        print("Impossible d ouvrir la webcam.")
+        return
+
+    smoother = Smoother()
+    times = deque(maxlen=30)
+    recording = False
+    started_at = 0.0
+    sequence = []
+    results_top = []
+    show_skeleton = True
+
+    last_frame = -1
+
+    try:
+        while True:
+            got = capture.grab(last_frame)
+            if got is None:
+                break
+            last_frame, captured_at, frame = got
+
+            started = time.perf_counter()
+            vector, drawable, person = source.process(frame)
+            times.append(time.perf_counter() - started)
+
+            height, width = frame.shape[:2]
+            frame = cv2.flip(frame, 1)
+            shown = smoother.update(drawable)
+
+            if show_skeleton:
+                draw_skeleton(frame, shown, width)
+
+            if recording:
+                # Horodatage de la CAPTURE : resample() se cale dessus, et
+                # celui de la fin du traitement ajouterait a chaque
+                # echantillon la duree variable du detecteur.
+                elapsed = captured_at - started_at
+                sequence.append((elapsed, vector))
+                remaining = max(record_seconds - elapsed, 0.0)
+
+                filled = int(width * min(elapsed / record_seconds, 1.0))
+                cv2.rectangle(frame, (0, 0), (filled, 8), COLOR_REC, -1)
+                cv2.putText(frame, f"ENREGISTREMENT  {remaining:.1f}s",
+                            (14, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                            COLOR_REC, 2, cv2.LINE_AA)
+
+                if elapsed >= record_seconds:
+                    recording = False
+                    if len(sequence) >= 8:
+                        captured = len(sequence) / max(elapsed, 1e-6)
+                        resampled = len(resample(sequence))
+                        print(f"  {len(sequence)} frames en {elapsed:.2f}s "
+                              f"({captured:.1f} fps) -> {resampled} frames "
+                              f"a {TARGET_FPS:.0f} fps")
+                        if captured < TARGET_FPS * 0.8:
+                            print(f"  ATTENTION : cadence basse, des frames "
+                                  f"sont repetees")
+                        results_top = classify(predict, sequence, classes,
+                                               centred)
+                    else:
+                        results_top = []
+                    sequence = []
+
+            if results_top:
+                lines = []
+                for rank, (word, score) in enumerate(results_top):
+                    colour = COLOR_OK if rank == 0 else COLOR_DIM
+                    scale = 0.85 if rank == 0 else 0.6
+                    lines.append((f"{rank + 1}. {word:<14} {score * 100:5.1f}%",
+                                  colour, scale))
+                draw_panel(frame, lines, "top 5")
+            elif not recording:
+                hint = ("ESPACE pour enregistrer" if person
+                        else "place-toi dans le cadre (buste visible)")
+                draw_panel(frame, [(hint, COLOR_OK if person else COLOR_REC, 0.7)])
+
+            fps = 1.0 / max(np.mean(times), 1e-6)
+            colour = COLOR_OK if fps >= TARGET_FPS * 0.8 else COLOR_REC
+            cv2.putText(frame, f"{fps:4.1f} / {TARGET_FPS:.0f} fps",
+                        (width - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        colour, 1, cv2.LINE_AA)
+
+            cv2.imshow("WLASL50 - RTMPose", frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+            if key == ord("l"):
+                show_skeleton = not show_skeleton
+            if key == ord(" ") and not recording and person:
+                recording = True
+                started_at = time.time()
+                sequence = []
+                results_top = []
+    finally:
+        capture.release()
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--card", default=None,
+                        help="fiche de modele a charger ; par defaut celle "
+                             "d ASL Citizen si elle existe, sinon celle de WLASL")
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--trt", dest="tensorrt", action="store_true",
+                        default=None,
+                        help="forcer le detecteur TensorRT. Par defaut, la "
+                             "demo suit la fiche : TensorRT si le modele a ete "
+                             "entraine sur des features TensorRT.")
+    choice.add_argument("--no-trt", dest="tensorrt", action="store_false",
+                        help="forcer CUDA.")
+    parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--mode", default="balanced",
+                        choices=("performance", "lightweight", "balanced"))
+    args = parser.parse_args()
+    if args.card:
+        META_PATH = args.card
+    print(f"Fiche : {os.path.relpath(META_PATH, PROJECT_ROOT)}")
+    run(args.camera, args.mode, tensorrt=args.tensorrt)

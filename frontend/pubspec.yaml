@@ -39,6 +39,9 @@ dependencies:
   camera_macos: ^0.1.1
   camera_windows: ^0.3.0
   flame_tiled: ^3.1.2
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

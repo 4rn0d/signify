@@ -5,6 +5,8 @@ import 'package:camera_macos/camera_macos.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/capture_cleanup.dart';
+import '../services/letter_recognizer.dart';
 import '../widgets/gragas_avatar.dart';
 
 class TrainingPage extends StatefulWidget {
@@ -28,12 +30,26 @@ class _TrainingPageState extends State<TrainingPage>
   int _gragasAnimationTrigger = 0;
   String? _cameraError;
 
+  final _letterRecognizer = LetterRecognizer();
+  Timer? _recognitionTimer;
+  bool _recognizing = false;
+  int _matchStreak = 0;
+  String? _recognitionStatus;
+
+  // A letter is validated once the model sees it in this many frames in a
+  // row, at this confidence or more: a single frame would pass on a flicker.
+  // 80% is the threshold of the Python letter demo.
+  static const _framesToValidate = 3;
+  static const _minConfidence = 0.8;
+  static const _recognitionInterval = Duration(milliseconds: 400);
+
   String get _currentLetter => String.fromCharCode(65 + _currentLetterIndex);
 
   void _onSignChecked(bool signCompleted) {
     if (!signCompleted || _trainingComplete) return;
 
     setState(() {
+      _matchStreak = 0;
       _gragasAnimation = GragasAnimation.drinkBarrel;
       _gragasAnimationTrigger++;
       if (_currentLetterIndex == 25) {
@@ -53,6 +69,8 @@ class _TrainingPageState extends State<TrainingPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _recognitionTimer?.cancel();
+    _letterRecognizer.close();
     _cameraController?.dispose();
     unawaited(_macOSCameraController?.destroy());
     super.dispose();
@@ -87,6 +105,7 @@ class _TrainingPageState extends State<TrainingPage>
           _cameraEnabled = true;
           _cameraLoading = false;
         });
+        _startRecognition();
       } else if (!kIsWeb &&
           defaultTargetPlatform != TargetPlatform.android &&
           defaultTargetPlatform != TargetPlatform.iOS &&
@@ -125,6 +144,7 @@ class _TrainingPageState extends State<TrainingPage>
           _cameraEnabled = true;
           _cameraLoading = false;
         });
+        _startRecognition();
       }
     } on CameraException catch (error) {
       await controller?.dispose();
@@ -150,6 +170,8 @@ class _TrainingPageState extends State<TrainingPage>
   Future<void> _disableCamera() async {
     final cameraController = _cameraController;
     final macOSCameraController = _macOSCameraController;
+    _recognitionTimer?.cancel();
+    _recognitionTimer = null;
     if (mounted) {
       setState(() {
         _cameraEnabled = false;
@@ -157,10 +179,66 @@ class _TrainingPageState extends State<TrainingPage>
         _cameraController = null;
         _macOSCameraController = null;
         _cameraError = null;
+        _matchStreak = 0;
+        _recognitionStatus = null;
       });
     }
     await cameraController?.dispose();
     await macOSCameraController?.destroy();
+  }
+
+  void _startRecognition() {
+    _recognitionTimer?.cancel();
+    _recognitionTimer = Timer.periodic(
+      _recognitionInterval,
+      (_) => unawaited(_recognizeFrame()),
+    );
+  }
+
+  Future<void> _recognizeFrame() async {
+    if (_recognizing || !_cameraEnabled || _trainingComplete) return;
+    _recognizing = true;
+    try {
+      final image = await _captureFrame();
+      if (image == null) return;
+      final prediction = await _letterRecognizer.recognize(image);
+      if (!mounted || !_cameraEnabled || _trainingComplete) return;
+
+      final matched =
+          prediction.letter == _currentLetter &&
+          prediction.confidence >= _minConfidence;
+      setState(() {
+        _recognitionStatus = prediction.describe();
+        _matchStreak = matched ? _matchStreak + 1 : 0;
+      });
+      if (_matchStreak >= _framesToValidate) _onSignChecked(true);
+    } on LetterServerException catch (error) {
+      if (mounted) setState(() => _recognitionStatus = error.message);
+    } on Exception {
+      // The camera was busy or closing: the next tick tries again.
+    } finally {
+      _recognizing = false;
+    }
+  }
+
+  Future<Uint8List?> _captureFrame() async {
+    final macOSCameraController = _macOSCameraController;
+    if (macOSCameraController != null) {
+      return (await macOSCameraController.takePicture())?.bytes;
+    }
+
+    final controller = _cameraController;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isTakingPicture) {
+      return null;
+    }
+    final picture = await controller.takePicture();
+    try {
+      return await picture.readAsBytes();
+    } finally {
+      unawaited(deleteCapture(picture.path));
+    }
   }
 
   void _onMacOSCameraInitialized(CameraMacOSController controller) {
@@ -285,6 +363,9 @@ class _TrainingPageState extends State<TrainingPage>
                         cameraEnabled: _cameraEnabled,
                         cameraTooltip: cameraTooltip,
                         cameraError: _cameraError,
+                        recognitionStatus: _cameraEnabled
+                            ? _recognitionStatus
+                            : null,
                         onCameraToggle: _toggleCamera,
                         onSignChecked: _onSignChecked,
                       ),
@@ -483,6 +564,7 @@ class _PracticePrompt extends StatelessWidget {
     required this.cameraEnabled,
     required this.cameraTooltip,
     required this.cameraError,
+    required this.recognitionStatus,
     required this.onCameraToggle,
     required this.onSignChecked,
   });
@@ -496,6 +578,7 @@ class _PracticePrompt extends StatelessWidget {
   final bool cameraEnabled;
   final String cameraTooltip;
   final String? cameraError;
+  final String? recognitionStatus;
   final VoidCallback onCameraToggle;
   final ValueChanged<bool> onSignChecked;
 
@@ -594,6 +677,15 @@ class _PracticePrompt extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          if (recognitionStatus != null && cameraError == null) ...[
+            const SizedBox(height: 8),
+            Text(
+              recognitionStatus!,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: secondaryTextColor),
+            ),
+          ],
           if (cameraError != null) ...[
             const SizedBox(height: 8),
             Text(

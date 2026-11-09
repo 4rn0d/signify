@@ -1,0 +1,11 @@
+{
+  "created": "2026-09-24T21:06:42-04:00",
+  "archived": "2026-10-01",
+  "model": "fusion (image + landmarks), SANS augmentation miroir",
+  "split": "temporal (grouped by frame index)",
+  "val_accuracy": 0.9373,
+  "works_on_one_hand_only": true,
+  "mirrored_accuracy": 0.0872,
+  "note": "Entraine avant l'augmentation miroir. Le dataset etant filme a ~95% avec la meme main, ce modele tombe a 0.0872 (le hasard est a 0.036) sur une main inversee. Remplace par sign_model_fusion.keras, qui atteint 0.9544 en miroir.",
+  "superseded_by": "sign_model_fusion.keras"
+}

@@ -1,12 +1,15 @@
 import 'package:flame/game.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
 import 'package:frontend/pages/training_page.dart';
 
-import 'pages/home_page.dart';
+import 'auth_gate.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final navigatorKey = GlobalKey<NavigatorState>();
   runApp(
     SignifyApp(
@@ -46,7 +49,7 @@ class SignifyApp extends StatelessWidget {
         splashFactory: InkRipple.splashFactory,
         useMaterial3: true,
       ),
-      home: game == null ? const HomePage() : GameWidget(game: game),
+      home: const AuthGate(),
     );
   }
 }

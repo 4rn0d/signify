@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'training_page.dart';
+import '../services/auth_service.dart';
+
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -8,7 +10,6 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -55,6 +56,22 @@ class HomePage extends StatelessWidget {
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Start learning'),
                     ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      try {
+                        await AuthService().signOut();
+                      } catch (error) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Could not sign out: $error'),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Log out'),
                   ),
                 ],
               ),
