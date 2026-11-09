@@ -33,7 +33,7 @@ class _LoginPageState extends State<LoginPage> {
     });
     try {
       await _auth.signIn(email: _emailCtrl.text, password: _passwordCtrl.text);
-      // AuthGate bascule automatiquement vers HomePage
+      // AuthGate switches to the authenticated destination.
     } on AuthException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -110,9 +110,9 @@ class _LoginPageState extends State<LoginPage> {
                       onPressed: _loading ? null : _submit,
                       child: _loading
                           ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('Se connecter'),
                     ),
                     TextButton(

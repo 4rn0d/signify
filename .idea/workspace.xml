@@ -5,161 +5,15 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ad36fd7c-2682-4817-8b16-be611935b8b9" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/backend/requirements.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/backend/server.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/android/app/google-services.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/firebase.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/auth_gate.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/firebase_options.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/pages/auth/login_page.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/pages/auth/signup_page.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/services/auth_service.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/services/capture_cleanup.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/services/capture_cleanup_io.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/services/capture_cleanup_stub.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/lib/services/letter_recognizer.dart" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/frontend/macos/Runner/GoogleService-Info.plist" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/.gitattributes" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/data/landmarks/.gitkeep" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/data/processed/.gitkeep" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/data/raw/.gitkeep" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/docs/ASL_CITIZEN.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/docs/FINDINGS.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/docs/RECORDING.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/docs/WLASL.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/.gitkeep" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/archive/sign_model_fusion_noflip.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/archive/sign_model_randomsplit.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/class_names.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/comparison.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/sign_model.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/sign_model_fusion.keras" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/alphabet/sign_model_fusion.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/aslc_gru_rtmpose.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/aslc_kfold_baseline.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/aslc_kfold_baseline_fold5.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/aslc_kfold_baseline_run1.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/archive/before_best/wlasl_gru_rtmpose.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_gru.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_gru_rtmpose.meta.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_80ep.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_all5.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_allclips_250ep.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_base2.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_best_4folds.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_cap7.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_cheap3.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_conf.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_confsym.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_confusion.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_control.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_depthproxy.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_dominant.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_drop.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_everything.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_gatehard.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_gatesoft.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_interp.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_keepz.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_lstm.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_p_soft.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_p_tips.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_p_vel.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_pre0.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_pre120.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_pre30.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_pre60.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_proj48.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_proj48full.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_proj_everything.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_rich.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_rtm07.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_rtm07_everything.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_rtm_rich.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_shape26.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_shape8.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_shared60_3folds.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_smooth.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_split.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_stack.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_tipbase.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_tips.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_units160.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_units48.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_velocity.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/models/wlasl/wlasl_kfold_zonly.json" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/notebooks/.gitkeep" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/requirements.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/scripts/wsl_gpu.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/data_loader.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/evaluate.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/hand_segmenter.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/landmark_extractor.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/model_cnn.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/model_fusion.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/model_landmark.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/prepare_segmented_dataset.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/preprocess.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/test_hand_segmenter.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/train.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/train_fusion.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/alphabet/webcam_demo_alphabet.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/bench_cells.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/check_consistency.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/check_parity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/check_timebase.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/check_window_parity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/extract.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/make_sign_sheet.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/asl_citizen/make_variant_review.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/check_gate_parity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/check_gpu.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/check_jitter.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/check_rate.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/check_source_parity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/extract_rtmpose.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/gpu_setup.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/hand_identity.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/merge_kfold.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/timebase.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/train_final.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/train_kfold.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/webcam_demo_rtm.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/webcam_rtm3d_viewer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/core/webcam_rtm_viewer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/audit_downloaded.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/audit_metadata.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/dedup_hands.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/download_videos.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/extract_landmarks.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/fetch_mirror.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/make_reference.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/organise_videos.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/model/src/wlasl/webcam_demo_words.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/backend/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/android/app/build.gradle.kts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/android/app/build.gradle.kts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/android/app/src/main/kotlin/com/example/frontend/MainActivity.kt" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/android/app/src/main/kotlin/com/signifyUDES2026/frontend/MainActivity.kt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/android/settings.gradle.kts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/android/settings.gradle.kts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/ios/Runner.xcodeproj/project.pbxproj" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/ios/Runner.xcodeproj/project.pbxproj" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/auth_gate.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/auth_gate.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/lib/main.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/main.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/lib/pages/home_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/pages/home_page.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/lib/pages/training_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/pages/training_page.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/linux/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/linux/CMakeLists.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/macos/Flutter/GeneratedPluginRegistrant.swift" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/macos/Flutter/GeneratedPluginRegistrant.swift" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/pages/auth/login_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/pages/auth/login_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/pages/auth/signup_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/pages/auth/signup_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/macos/Runner.xcodeproj/project.pbxproj" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/macos/Runner.xcodeproj/project.pbxproj" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/macos/Runner/Configs/AppInfo.xcconfig" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/macos/Runner/Configs/AppInfo.xcconfig" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/macos/Runner/DebugProfile.entitlements" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/macos/Runner/DebugProfile.entitlements" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/macos/Runner/Release.entitlements" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/macos/Runner/Release.entitlements" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/pubspec.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/pubspec.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/pubspec.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/windows/flutter/generated_plugin_registrant.cc" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/windows/flutter/generated_plugin_registrant.cc" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/windows/flutter/generated_plugins.cmake" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/windows/flutter/generated_plugins.cmake" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/test/widget_test.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/test/widget_test.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -188,26 +42,26 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "CidrDebugProfileConversion": "true",
-    "Flutter.Main.executor": "Run",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.cidr.known.project.marker": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.readMode.enableVisualFormatting": "true",
-    "cf.first.check.clang-format": "false",
-    "cidr.known.project.marker": "true",
-    "dart.analysis.tool.window.visible": "false",
-    "git-widget-placeholder": "Merging feat/menu",
-    "io.flutter.reload.alreadyRun": "true",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "/Users/arnaudturcotte/Documents/Code/signify/frontend/assets/images",
-    "settings.editor.selected.configurable": "dart.settings",
-    "show.migrate.to.gradle.popup": "false"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;CidrDebugProfileConversion&quot;: &quot;true&quot;,
+    &quot;Flutter.Main.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.readMode.enableVisualFormatting&quot;: &quot;true&quot;,
+    &quot;cf.first.check.clang-format&quot;: &quot;false&quot;,
+    &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;dart.analysis.tool.window.visible&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;feat/menu&quot;,
+    &quot;io.flutter.reload.alreadyRun&quot;: &quot;true&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/arnaudturcotte/Documents/Code/signify/frontend/assets/images&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;dart.settings&quot;,
+    &quot;show.migrate.to.gradle.popup&quot;: &quot;false&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/frontend/assets/images" />

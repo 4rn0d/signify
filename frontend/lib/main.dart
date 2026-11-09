@@ -6,6 +6,7 @@ import 'package:frontend/pages/training_page.dart';
 
 import 'auth_gate.dart';
 import 'firebase_options.dart';
+import 'pages/home_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,10 +29,16 @@ Future<void> main() async {
 }
 
 class SignifyApp extends StatelessWidget {
-  const SignifyApp({super.key, this.game, this.navigatorKey});
+  const SignifyApp({
+    super.key,
+    this.game,
+    this.navigatorKey,
+    this.authStatus,
+  });
 
   final MenuGame? game;
   final GlobalKey<NavigatorState>? navigatorKey;
+  final Stream<bool>? authStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +56,10 @@ class SignifyApp extends StatelessWidget {
         splashFactory: InkRipple.splashFactory,
         useMaterial3: true,
       ),
-      home: const AuthGate(),
+      home: AuthGate(
+        menu: game == null ? const HomePage() : GameWidget(game: game),
+        authStatus: authStatus,
+      ),
     );
   }
 }
