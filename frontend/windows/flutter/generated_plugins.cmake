@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   camera_windows
+  cloud_firestore
   firebase_auth
   firebase_core
 )
