@@ -39,7 +39,7 @@ dependencies:
   camera_macos: ^0.1.1
   camera_windows: ^0.3.0
   firebase_core: ^4.15.0
-  firebase_auth: ^6.7.0
+  firebase_auth: ^6.7.1
   http: ^1.6.0
   cloud_firestore: ^6.10.2
 
