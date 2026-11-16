@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'profile_page.dart';
 import 'training_page.dart';
 import '../services/auth_service.dart';
-
+import '../services/user_profile_service.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -56,6 +57,31 @@ class HomePage extends StatelessWidget {
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Start learning'),
                     ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      final user = AuthService().currentUser;
+                      if (user == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('No signed-in user was found.'),
+                          ),
+                        );
+                        return;
+                      }
+
+                      final profile = UserProfileService().loadOrCreateProfile(
+                        user,
+                      );
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (context) =>
+                              ProfilePage(email: user.email, profile: profile),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.person_outline),
+                    label: const Text('Profile'),
                   ),
                   TextButton.icon(
                     onPressed: () async {
