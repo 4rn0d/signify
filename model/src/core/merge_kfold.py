@@ -128,13 +128,20 @@ def main():
     # pretrain_curves la courbe de pre-entrainement de chaque fold.
     for field in ("per_fold", "per_fold_plateau", "curves", "by_seed_count",
                   "out_of_fold", "pretrain_curves", "curves_bn_recalibrated"):
+        # Un fold sans ce champ (un .partial.json n a ni predictions ni courbe
+        # de pre-entrainement) garde sa place, vide : sauter l entree
+        # decalerait toutes les suivantes vers le mauvais fold.
         values = []
         for fold in order:
             _, data, position = by_fold[fold]
             if data.get(field) and position < len(data[field]):
                 values.append(data[field][position])
-        if values:
+            else:
+                values.append(None)
+        if any(v is not None for v in values):
             merged[field] = values
+        else:
+            merged.pop(field, None)
 
     plateau = np.array(merged["per_fold_plateau"], dtype=float)
     merged["plateau_mean"] = float(plateau.mean())
