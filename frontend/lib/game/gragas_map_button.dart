@@ -10,6 +10,7 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
     with TapCallbacks, HoverCallbacks, HasGameReference<FlameGame> {
   GragasMapButton({
     required super.position,
+    required this.label,
     required this.onPressed,
   }) : super(
           size: Vector2.all(48),
@@ -17,6 +18,7 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
           current: GragasAnimation.idle,
         );
 
+  final String label;
   final VoidCallback onPressed;
   bool _hovered = false;
 
@@ -48,7 +50,7 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
             const Radius.circular(8),
           ),
         );
-      renderTavernHoverGlow(canvas, path);
+      renderTavernHoverGlow(canvas, path, label: label);
     }
     super.render(canvas);
   }

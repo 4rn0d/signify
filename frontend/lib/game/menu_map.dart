@@ -20,6 +20,7 @@ class Menu extends World {
     required this.onQuestsPressed,
     required this.onLeaderboardPressed,
     required this.onSettingsPressed,
+    required this.onToKitchenPressed,
     required this.onRoomPositionsLoaded,
   });
 
@@ -27,6 +28,7 @@ class Menu extends World {
   final void Function() onQuestsPressed;
   final void Function() onLeaderboardPressed;
   final void Function() onSettingsPressed;
+  final void Function() onToKitchenPressed;
   final void Function(Map<String, Vector2> positions) onRoomPositionsLoaded;
   late TiledComponent menu;
 
@@ -59,6 +61,7 @@ class Menu extends World {
     add(
       GragasMapButton(
         position: Vector2(gragasObject.x, gragasObject.y),
+        label: 'Training',
         onPressed: onGragasPressed,
       ),
     );
@@ -73,6 +76,7 @@ class Menu extends World {
           for (final point in questsObject.polygon)
             Vector2(point.x.toDouble(), point.y.toDouble()),
         ],
+        label: 'Quests',
         onPressed: onQuestsPressed,
       ),
     );
@@ -87,6 +91,7 @@ class Menu extends World {
           for (final point in leaderboardObject.polygon)
             Vector2(point.x.toDouble(), point.y.toDouble()),
         ],
+        label: 'Leaderboard',
         onPressed: onLeaderboardPressed,
       ),
     );
@@ -101,7 +106,25 @@ class Menu extends World {
           for (final point in settingsObject.polygon)
             Vector2(point.x.toDouble(), point.y.toDouble()),
         ],
+        label: 'Settings',
         onPressed: onSettingsPressed,
+      ),
+    );
+
+    final toKitchenObject = buttonLayer.objects.singleWhere(
+      (object) => object.name == 'to_kitchen',
+    );
+    add(
+      MapActionHotspot.fromPolygon(
+        objectPosition: Vector2(toKitchenObject.x, toKitchenObject.y),
+        polygonPoints: [
+          Vector2(0, 0),
+          Vector2(toKitchenObject.width, 0),
+          Vector2(toKitchenObject.width, toKitchenObject.height),
+          Vector2(0, toKitchenObject.height),
+        ],
+        label: 'Kitchen',
+        onPressed: onToKitchenPressed,
       ),
     );
 

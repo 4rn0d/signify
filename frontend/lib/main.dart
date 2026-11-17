@@ -56,6 +56,16 @@ Future<void> main() async {
             ),
           );
         },
+        onToKitchenPressed: () {
+          navigatorKey.currentState?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => const MapDestinationPlaceholder(
+                title: 'Kitchen',
+                icon: Icons.settings_outlined,
+              ),
+            ),
+          );
+        },
       ),
     ),
   );

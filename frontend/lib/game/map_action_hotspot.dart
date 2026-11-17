@@ -8,6 +8,7 @@ class MapActionHotspot extends PositionComponent
   factory MapActionHotspot.fromPolygon({
     required Vector2 objectPosition,
     required List<Vector2> polygonPoints,
+    required String label,
     required void Function() onPressed,
   }) {
     if (polygonPoints.length < 3) {
@@ -37,6 +38,7 @@ class MapActionHotspot extends PositionComponent
       position: objectPosition + Vector2(minX, minY),
       size: Vector2(maxX - minX, maxY - minY),
       polygon: localPolygon,
+      label: label,
       onPressed: onPressed,
     );
   }
@@ -45,11 +47,13 @@ class MapActionHotspot extends PositionComponent
     required super.position,
     required super.size,
     required List<Vector2> polygon,
+    required this.label,
     required this.onPressed,
   })  : _polygonPath = _createPolygonPath(polygon),
         super(anchor: Anchor.topLeft);
 
   final void Function() onPressed;
+  final String label;
   final Path _polygonPath;
   bool _hovered = false;
 
@@ -70,7 +74,7 @@ class MapActionHotspot extends PositionComponent
   void render(Canvas canvas) {
     if (!_hovered) return;
 
-    renderTavernHoverGlow(canvas, _polygonPath);
+    renderTavernHoverGlow(canvas, _polygonPath, label: label);
   }
 
   static Path _createPolygonPath(List<Vector2> points) {
