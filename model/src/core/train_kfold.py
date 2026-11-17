@@ -18,6 +18,8 @@ la reconnaissance de personnes plutot que de signes.
 import argparse
 import collections
 import concurrent.futures
+import csv
+import time
 import glob
 import hashlib
 import inspect
@@ -117,6 +119,53 @@ POSE_START = HAND_BLOCK * 2 + 2
 # POSE_KEYPOINTS = [nez, epauleG, epauleD, coudeG, coudeD, poignetG, poignetD,
 #                   hancheG, hancheD] -> paires gauche/droite a echanger.
 POSE_MIRROR_PAIRS = [(1, 2), (3, 4), (5, 6), (7, 8)]
+
+
+_SEQUENCE_MEMO = {}
+
+
+def cached_sequences(variants, features_dir, use_cache=True, **options):
+    """load_sequences, mis en cache sur disque et en memoire.
+
+    Le chargement lit les 12 270 fichiers d ASL Citizen un par un (22 s rien
+    que pour les lire depuis WSL, a travers le pont vers le disque Windows),
+    les recale a 30 fps et les fenetre : ~2 min par run, et deux fois par run
+    (cible puis echafaudage). Le resultat ne depend que des options, des
+    fichiers et du code de chargement : la cle les couvre tous (noms, tailles
+    et dates des fichiers, source de load_sequences et de timebase), donc un
+    fichier ou une ligne de code changes refont le cache au lieu de le
+    reprendre. Le cache vit a cote du dossier de features, deja hors git.
+    """
+    folder = os.path.abspath(features_dir or FEATURES_DIR)
+    if not use_cache:
+        return load_sequences(variants, features_dir, **options)
+    listing = [(os.path.basename(p), os.path.getsize(p), int(os.path.getmtime(p)))
+               for p in sorted(glob.glob(os.path.join(folder, "*.npz")))]
+    manifest = (int(os.path.getmtime(MANIFEST_PATH))
+                if os.path.exists(MANIFEST_PATH) else None)
+    source = inspect.getsource(load_sequences) + inspect.getsource(timebase)
+    key = hashlib.sha256(json.dumps(
+        [variants, sorted(options.items()), listing, manifest, source]).encode("utf-8")
+    ).hexdigest()[:16]
+    if key in _SEQUENCE_MEMO:
+        return _SEQUENCE_MEMO[key]
+    path = os.path.join(os.path.dirname(folder), "load_cache", f"sequences_{key}.pkl")
+    started = time.perf_counter()
+    if os.path.exists(path):
+        with open(path, "rb") as handle:
+            records = pickle.load(handle)
+        print(f"sequences reprises du cache ({len(records)} clips, "
+              f"{time.perf_counter() - started:.0f} s)", flush=True)
+    else:
+        records = load_sequences(variants, features_dir, **options)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "wb") as handle:
+            pickle.dump(records, handle, protocol=5)
+        os.replace(path + ".tmp", path)
+        print(f"sequences chargees et mises en cache ({len(records)} clips, "
+              f"{time.perf_counter() - started:.0f} s)", flush=True)
+    _SEQUENCE_MEMO[key] = records
+    return records
 
 
 def load_sequences(variants="all", features_dir=None, metadata_only=False,
@@ -428,6 +477,78 @@ def augment_batch(batch, rng, layout=None, hand_dropout=0.0):
         out = drop_hand(out, rng, layout or Layout.from_dim(out.shape[-1]),
                         probability=hand_dropout)
 
+    return out
+
+
+def real_lengths(batch):
+    """Longueur de la partie reelle de chaque sequence : jusqu a la derniere
+    frame non nulle (le remplissage de WLASL est fait de zeros en fin)."""
+    nonzero = np.any(batch != 0, axis=2)
+    last = batch.shape[1] - 1 - np.argmax(nonzero[:, ::-1], axis=1)
+    return np.where(nonzero.any(axis=1), last + 1, 0)
+
+
+def warp_all(batch, factors, lengths):
+    """time_warp applique a tout un lot d un coup, un facteur par sequence.
+
+    Meme calcul que time_warp, clip par clip : centre de la partie reelle,
+    bords repetes, remplissage intact. Un facteur de 1, ou une partie reelle
+    de moins de 2 frames, laisse la sequence telle quelle.
+    """
+    steps = np.arange(batch.shape[1])[None, :]
+    length = lengths[:, None]
+    centre = (length - 1) / 2
+    inside = (steps < length) & (length >= 2)
+    position = np.clip(centre + (steps - centre) / factors[:, None], 0,
+                       np.maximum(length - 1, 0))
+    position = np.where(inside, position, steps)
+    before = np.floor(position).astype(int)
+    after = np.where(inside, np.minimum(before + 1, length - 1), steps)
+    weight = (position - before)[..., None].astype(np.float32)
+    rows = np.arange(len(batch))[:, None]
+    warped = batch[rows, before] * (1.0 - weight) + batch[rows, after] * weight
+    return np.where(inside[..., None], warped, batch).astype(np.float32)
+
+
+def drop_frames_all(batch, drop):
+    """Abandon de frames sur tout un lot : `drop` (lot, frames) dit quelles
+    frames sont perdues ; chacune est remplacee par la derniere gardee."""
+    drop = drop.copy()
+    drop[:, 0] = False
+    kept = np.where(drop, 0, np.arange(batch.shape[1])[None, :])
+    return batch[np.arange(len(batch))[:, None], np.maximum.accumulate(kept, axis=1)]
+
+
+def augment_batch_fast(batch, rng, layout=None, hand_dropout=0.0):
+    """augment_batch sans boucle Python : memes augmentations, memes
+    probabilites, tirees pour tout le lot a la fois.
+
+    La boucle clip par clip prenait ~0.9 s par epoch de pre-entrainement et
+    tenait le verrou de Python : impossible a paralleliser par fils. Ici tout
+    est numpy, qui libere ce verrou, et --fast-prep repartit l epoch entre
+    plusieurs fils. Les tirages ne sont pas ceux d augment_batch (meme loi,
+    autres nombres) : d ou une option, l ancien chemin restant le defaut.
+    """
+    n, frames = batch.shape[:2]
+    warp = rng.random(n) < 0.5
+    factors = np.where(warp, rng.uniform(0.8, 1.25, n), 1.0)
+    out = warp_all(batch, factors, real_lengths(batch))
+
+    dropping = rng.random(n) < 0.3
+    out = drop_frames_all(out, (rng.random((n, frames)) < 0.1) & dropping[:, None])
+
+    noisy = rng.random(n) < 0.5
+    if noisy.any():
+        out[noisy] += 0.01 * rng.standard_normal(
+            (int(noisy.sum()),) + out.shape[1:], dtype=np.float32)
+
+    flip = rng.random(n) < 0.5
+    if flip.any():
+        out[flip] = mirror(out[flip], layout)
+
+    if hand_dropout > 0.0:
+        out = drop_hand(out, rng, layout or Layout.from_dim(out.shape[-1]),
+                        probability=hand_dropout)
     return out
 
 
@@ -1147,7 +1268,8 @@ def _classifier(x, num_classes):
     return layers.Dense(num_classes, activation="softmax", name="output")(x)
 
 
-def build_tcn(num_classes, units, feature_dim, project):
+def build_tcn(num_classes, units, feature_dim, project, readout="mean",
+              norm="none", kernel=3, spatial_dropout=False, dropout_end=False):
     """Convolutions temporelles dilatees, NON causales.
 
     Le TCN de la litterature est causal (il ne voit que le passe) parce
@@ -1158,23 +1280,57 @@ def build_tcn(num_classes, units, feature_dim, project):
 
     Pas de Masking : avec la fenetre centree sur le signe (timebase), les
     bords sont des frames repetees, jamais des zeros.
+
+    Mis a l essai apres le premier k-fold (0.8627, a egalite avec le GRU),
+    chacun seul, comme le GRU avant lui. Par defaut, le modele d avant a
+    l identique (memes couches, memes noms, memes tirages) :
+    - readout "attention" : AttentionPool au lieu de la moyenne. ~36 des 80
+      frames sont du repos ; c est ce qui a debloque le GRU ;
+    - norm "batch" : BatchNormalization apres chaque convolution, avant le
+      ReLU, comme le TCN standard et notre ST-GCN. Rien a voir avec la
+      LayerNorm qui a fait perdre le GRU : elle remettait a l echelle les
+      frames d entree, celle-ci stabilise les couches internes ;
+    - kernel : noyau 5 ou 7 au lieu de 3, des transitions plus fines des le
+      premier bloc ;
+    - spatial_dropout : des canaux entiers retires (SpatialDropout1D) plutot
+      que des valeurs isolees, que les frames voisines, presque identiques,
+      rendent inoffensives ;
+    - dropout_end : un seul dropout, apres le dernier bloc, au lieu d un par
+      convolution. Avec norm "batch", chaque dropout d un bloc nourrit la
+      BatchNorm suivante, qui apprend alors l echelle bruitee de
+      l entrainement et l applique au test, ou le dropout est coupe (Li et
+      al., CVPR 2019, "variance shift"). Apres le dernier bloc, plus aucune
+      BatchNorm ne le suit.
     """
     inputs = layers.Input(shape=(MAX_LEN, feature_dim))
     x = inputs
     if project:
         x = layers.Dense(project, activation=None, name="projection")(x)
+    dropout = layers.SpatialDropout1D if spatial_dropout else layers.Dropout
+
+    def conv(x, i, part, dilation):
+        x = layers.Conv1D(units, kernel, dilation_rate=dilation, padding="same",
+                          activation=None if norm == "batch" else "relu",
+                          name=f"tcn{i}_{part}")(x)
+        if norm == "batch":
+            x = layers.BatchNormalization(name=f"tcn{i}_{part}_bn")(x)
+            x = layers.ReLU(name=f"tcn{i}_{part}_relu")(x)
+        if dropout_end:
+            return x
+        return dropout(0.2, name=f"tcn{i}_drop_{part}")(x)
+
     for i, dilation in enumerate((1, 2, 4, 8, 16)):
         residual = x
-        y = layers.Conv1D(units, 3, dilation_rate=dilation, padding="same",
-                          activation="relu", name=f"tcn{i}_a")(x)
-        y = layers.Dropout(0.2, name=f"tcn{i}_drop_a")(y)
-        y = layers.Conv1D(units, 3, dilation_rate=dilation, padding="same",
-                          activation="relu", name=f"tcn{i}_b")(y)
-        y = layers.Dropout(0.2, name=f"tcn{i}_drop_b")(y)
+        y = conv(conv(x, i, "a", dilation), i, "b", dilation)
         if residual.shape[-1] != units:
             residual = layers.Conv1D(units, 1, name=f"tcn{i}_res")(residual)
         x = layers.ReLU(name=f"tcn{i}_out")(layers.Add(name=f"tcn{i}_add")([y, residual]))
-    x = layers.GlobalAveragePooling1D(name="pool")(x)
+    if dropout_end:
+        x = dropout(0.2, name="tcn_drop_end")(x)
+    if readout == "attention":
+        x = AttentionPool(name="attention")(x)
+    else:
+        x = layers.GlobalAveragePooling1D(name="pool")(x)
     return models.Model(inputs, _classifier(x, num_classes), name="tcn")
 
 
@@ -1223,7 +1379,8 @@ def build_stgcn(num_classes, units, feature_dim, raw_dim):
 
 def build_model(num_classes, units=96, feature_dim=155, cell="gru",
                 label_smoothing=0.0, project=0, raw_dim=None, readout="last",
-                clipnorm=None, layer_norm=False):
+                clipnorm=None, layer_norm=False, tcn_norm="none", tcn_kernel=3,
+                tcn_spatial_dropout=False, tcn_dropout_end=False):
     """cell : 'gru', 'lstm', 'stack' (une couche de chaque), 'tcn' ou 'stgcn'.
 
     readout, pour les cellules recurrentes : 'last' lit l etat final (WLASL),
@@ -1249,7 +1406,10 @@ def build_model(num_classes, units=96, feature_dim=155, cell="gru",
         else "sparse_categorical_crossentropy"
     )
     if cell in ("tcn", "stgcn"):
-        model = (build_tcn(num_classes, units, feature_dim, project)
+        model = (build_tcn(num_classes, units, feature_dim, project, readout=readout,
+                           norm=tcn_norm, kernel=tcn_kernel,
+                           spatial_dropout=tcn_spatial_dropout,
+                           dropout_end=tcn_dropout_end)
                  if cell == "tcn"
                  else build_stgcn(num_classes, units, feature_dim, raw_dim))
         model.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=clipnorm),
@@ -1361,6 +1521,7 @@ def signer_folds(records, k, seed=0):
 # couvert : il change a chaque nouvelle option d affinage.
 PRETRAIN_CODE = (Layout, load_sequences, top_glosses, signer_folds, pad_sequence,
                  mirror, time_warp, augment_batch, drop_hand, add_velocity,
+                 real_lengths, warp_all, drop_frames_all, augment_batch_fast,
                  drop_z_indices, add_depth_proxy, gate_hands, add_handshape,
                  add_symmetry, add_rich_features, skeleton_edges, skeleton_adjacency,
                  Columns, SkeletonNodes, GraphConv, AttentionPool, _classifier,
@@ -1370,10 +1531,13 @@ PRETRAIN_CODE = (Layout, load_sequences, top_glosses, signer_folds, pad_sequence
 # cache. Toute autre option le rend perime, y compris celles qui ne changent
 # que la partition des signeurs (--vocab, --clips-from...), puisque c est elle
 # qui decide quels signeurs le pre-entrainement exclut.
-FINE_TUNE_ONLY = {"epochs", "tta", "tag", "only_fold", "seeds", "shared_pretrain",
+FINE_TUNE_ONLY = {"bn_recalibration", "no_load_cache", "prep_threads", "epochs", "tta", "tag", "only_fold", "seeds", "shared_pretrain",
                   "pretrain_cache", "interpolate", "smooth", "max_train_signers",
                   # change la vitesse, pas les nombres (verifie au bit pres)
-                  "no_prefetch"}
+                  "no_prefetch",
+                  # le poids des tetes phonologiques n agit qu a l affinage,
+                  # sauf avec --phonology-pretrain (voir pretrain_fingerprint)
+                  "phonology"}
 # Le filtrage des mains ne touche l echafaudage qu avec --gate-pretrain.
 GATE_OPTIONS = {"gate", "gate_soft", "gate_inside", "gate_conflict"}
 
@@ -1386,22 +1550,43 @@ def pretrain_fingerprint(args, device):
     """
     ignored = FINE_TUNE_ONLY | (set() if args.gate_pretrain else GATE_OPTIONS)
     options = {k: v for k, v in sorted(vars(args).items()) if k not in ignored}
-    source = "".join(inspect.getsource(item) for item in PRETRAIN_CODE)
+    code = list(PRETRAIN_CODE)
+    if args.phonology_pretrain:
+        # Les tetes phonologiques entrent alors dans le pre-entrainement : leur
+        # code et leur poids dans la perte en font partie. Sans elles, ni l un
+        # ni l autre ne compte, et le cache d avant leur ajout reste valable.
+        code += [add_phonology_heads, masked_sparse_crossentropy]
+        options["phonology"] = args.phonology
+    source = "".join(inspect.getsource(item) for item in code)
     return {"options": options, "device": device,
             "code": hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]}
 
 
-def load_pretrain(path, fingerprint):
-    """Le pre-entrainement en cache, None s il n existe pas, arret s il est perime."""
+def load_pretrain(path, fingerprint, defaults=None):
+    """Le pre-entrainement en cache, None s il n existe pas, arret s il est perime.
+
+    defaults : les valeurs par defaut des options. Une option ajoutee apres la
+    creation du cache n y figure pas ; laissee a sa valeur par defaut, elle ne
+    change rien au pre-entrainement et ne doit pas le rendre perime.
+    """
     if not os.path.exists(path):
         return None
     with open(path, "rb") as handle:
         cached = pickle.load(handle)
     old = cached["fingerprint"]
-    if old != fingerprint:
-        stale = sorted(k for k in set(old["options"]) | set(fingerprint["options"])
-                       if old["options"].get(k) != fingerprint["options"].get(k))
-        stale += [k for k in ("device", "code") if old[k] != fingerprint[k]]
+    defaults = defaults or {}
+
+    def same(key):
+        mine, theirs = fingerprint["options"], old["options"]
+        if key in mine and key in theirs:
+            return mine[key] == theirs[key]
+        present = mine if key in mine else theirs
+        return key in defaults and present[key] == defaults[key]
+
+    stale = sorted(k for k in set(old["options"]) | set(fingerprint["options"])
+                   if not same(k))
+    stale += [k for k in ("device", "code") if old[k] != fingerprint[k]]
+    if stale:
         raise SystemExit(
             f"{path} vient d un autre pre-entrainement (differe : "
             f"{', '.join(stale)}). Le reprendre melangerait deux configurations "
@@ -1419,11 +1604,145 @@ def save_pretrain(path, entry):
     os.replace(partial, path)
 
 
+# Les composantes phonologiques d ASL-LEX que le modele apprend a predire en
+# plus du signe (--phonology). Remplies pour les 400 premiers rangs ; seules
+# la flexion (32 sur 400) et le mouvement (72) ont des trous, que la perte
+# ignore. "None" n est pas un trou : c est un signe sans deplacement.
+PHONOLOGY = ("Handshape.2.0", "SelectedFingers.2.0", "Flexion.2.0",
+             "MajorLocation.2.0", "Movement.2.0", "SignType.2.0")
+ASL_LEX_PATH = os.path.join(PROJECT_ROOT, "data", "asl_lex", "signdata.csv")
+
+
+def phonology_table(features_dir):
+    """glose -> valeur de chaque composante (None si ASL-LEX ne la donne pas).
+
+    Le code ASL-LEX de chaque glose vient de ranked_signs.json, a cote du
+    dossier de features : c est lui qui a choisi le vocabulaire.
+    """
+    ranked = os.path.join(os.path.dirname(os.path.normpath(features_dir)),
+                          "ranked_signs.json")
+    with open(ranked, encoding="utf-8") as handle:
+        codes = {s["gloss"]: s["code"] for s in json.load(handle)}
+    # signdata.csv n est pas en UTF-8 valide partout ; latin-1 lit tout.
+    with open(ASL_LEX_PATH, encoding="latin-1") as handle:
+        lex = {row["Code"]: row for row in csv.DictReader(handle)}
+    def value(row, column):
+        text = (row.get(column) or "").strip()
+        return None if text in ("", "NA") else text
+
+    return {gloss: tuple(value(lex[code], c) for c in PHONOLOGY)
+            for gloss, code in codes.items() if code in lex}
+
+
+def masked_sparse_crossentropy(y_true, y_pred):
+    """Entropie croisee qui ignore les etiquettes -1 (composante inconnue)."""
+    y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+    known = tf.cast(y_true >= 0, y_pred.dtype)
+    loss = tf.keras.losses.sparse_categorical_crossentropy(tf.maximum(y_true, 0), y_pred)
+    return loss * known
+
+
+def bn_probes(model):
+    """Chaque BatchNorm du modele, avec un modele qui rend son entree.
+
+    Sert a remesurer les statistiques des BatchNorm SANS dropout (voir
+    build_tcn, dropout_end) : un dropout place avant une BatchNorm lui fait
+    apprendre l echelle bruitee de l entrainement, que le test, sans dropout,
+    n a plus. Les modeles partagent les couches de `model` : ils suivent ses
+    poids sans copie. Vide sans BatchNorm.
+    """
+    norms = [l for l in model.layers if isinstance(l, layers.BatchNormalization)]
+    return [(layer, models.Model(model.inputs, layer.input)) for layer in norms]
+
+
+def recalibrate_bn(probes, x, batch_size):
+    """Remesure moyenne et variance de chaque BatchNorm sur x, dropout coupe.
+
+    Couche par couche, dans l ordre : l entree de la n-ieme depend des
+    precedentes, deja remesurees. Rend les statistiques d avant, pour
+    restore_bn : l entrainement doit reprendre exactement ou il etait.
+    """
+    saved = [(layer.moving_mean.numpy(), layer.moving_variance.numpy())
+             for layer, _ in probes]
+    for layer, probe in probes:
+        values = probe.predict(x, batch_size=batch_size, verbose=0)
+        axes = tuple(range(values.ndim - 1))
+        layer.moving_mean.assign(values.mean(axis=axes))
+        layer.moving_variance.assign(values.var(axis=axes))
+    return saved
+
+
+def restore_bn(probes, saved):
+    for (layer, _), (mean, variance) in zip(probes, saved):
+        layer.moving_mean.assign(mean)
+        layer.moving_variance.assign(variance)
+
+
+def add_phonology_heads(model, sizes, weight, clipnorm=None, label_smoothing=0.0):
+    """Le MEME modele, plus une tete par composante phonologique.
+
+    Les tetes partent de ce que lit la couche dense de la tete du signe
+    (sortie de l attention pour le GRU) : linaires, ~12 000 parametres pour
+    les 6 composantes, +4 %. Le modele rendu PARTAGE ses couches avec
+    `model` : l entrainer entraine `model`, qui predit toujours le seul signe,
+    si bien que l evaluation, le transfert du pre-entrainement et la demo ne
+    changent pas. build_model n est pas touche, et l empreinte du cache non
+    plus.
+
+    Les composantes apprennent de tous les signes qui les partagent (la main
+    plate revient dans 13 des 100 cibles) ; c est ce qui doit aider le tronc
+    a coder la forme de la main, la ou les paires confondues different.
+    """
+    trunk = model.layers[-3].input
+    heads = [layers.Dense(size, activation="softmax", name=f"phonology_{i}")
+             for i, size in enumerate(sizes)]
+    trainer = models.Model(model.inputs, [model.outputs[0]] + [h(trunk) for h in heads])
+    sign_loss = (tf.keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+                 if label_smoothing > 0 else "sparse_categorical_crossentropy")
+    trainer.compile(optimizer=tf.keras.optimizers.Adam(1e-3, clipnorm=clipnorm),
+                    loss=[sign_loss] + [masked_sparse_crossentropy] * len(sizes),
+                    loss_weights=[1.0] + [weight] * len(sizes),
+                    metrics=[["accuracy"]] + [[] for _ in sizes])
+    return trainer, heads
+
+
+def sign_accuracy(history):
+    """La precision du signe dans un historique Keras, une ou plusieurs sorties."""
+    if "accuracy" in history.history:
+        return history.history["accuracy"][0]
+    return next(v for k, v in history.history.items() if k.endswith("accuracy"))[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--pretrain-batch", type=int, default=0, metavar="N",
+                        help="taille de lot du pre-entrainement seulement (0 = "
+                             "--batch). Le GPU attend entre les petits lots : 128 "
+                             "va ~2.8x plus vite que 32 (mesure sur le TCN combine)")
+    parser.add_argument("--bn-recalibration", action="store_true",
+                        help="noter aussi chaque epoch avec les BatchNorm "
+                             "remesurees sans dropout (bn_probes). Mesure faite sur "
+                             "le TCN combine : +0.1 point, negligeable ; coute ~2 "
+                             "evaluations de plus et 10 compilations par fold")
+    parser.add_argument("--no-load-cache", action="store_true",
+                        help="relire les fichiers de features au lieu du cache "
+                             "de chargement (load_cache/ a cote du dossier)")
+    parser.add_argument("--fast-prep", action="store_true",
+                        help="preparer chaque epoch en 16 morceaux sur plusieurs "
+                             "fils, augmentation sans boucle Python "
+                             "(augment_batch_fast). Memes augmentations, autres "
+                             "tirages : les resultats changent, pas leur loi")
+    parser.add_argument("--prep-threads", type=int, default=8,
+                        help="fils pour --fast-prep ; ne change que la vitesse")
+    parser.add_argument("--pretrain-scaling", default="none",
+                        choices=("none", "lr", "adam"),
+                        help="adapter Adam au lot du pre-entrainement, k = "
+                             "pretrain-batch / batch. lr : taux x racine(k). adam : "
+                             "regle de Malladi et al. (NeurIPS 2022, def. 5.2), taux "
+                             "x racine(k), 1-beta1 et 1-beta2 x k, epsilon / racine(k)")
     parser.add_argument("--units", type=int, default=96)
     parser.add_argument("--project", type=int, default=0, metavar="N",
                         help="projeter l entree sur N dimensions avant le GRU, "
@@ -1449,6 +1768,16 @@ def main():
                         help="LayerNormalization entre la projection et le GRU : "
                              "remet l entree a l echelle a chaque frame. Contre "
                              "l effondrement du fold 5, voir build_model.")
+    parser.add_argument("--phonology", type=float, default=0.0, metavar="LAMBDA",
+                        help="predire aussi les 6 composantes ASL-LEX du signe "
+                             "(forme de main, doigts, flexion, emplacement, "
+                             "mouvement, une/deux mains), avec ce poids dans la "
+                             "perte. A l affinage seulement : reprend le cache "
+                             "de pre-entrainement. ASL Citizen seulement.")
+    parser.add_argument("--phonology-pretrain", action="store_true",
+                        help="les tetes phonologiques aussi au pre-entrainement ; "
+                             "elles passent ensuite a l affinage, leurs valeurs "
+                             "etant les memes pour tous les signes")
     parser.add_argument("--no-prefetch", action="store_true",
                         help="preparer chaque epoch (augmentation, colonnes "
                              "derivees) APRES la precedente, comme avant. Par "
@@ -1460,7 +1789,18 @@ def main():
                         help="comment un GRU/LSTM rend sa reponse : etat final "
                              "(WLASL), moyenne des frames, ou moyenne aux poids "
                              "appris. Sur ASL Citizen l etat final arrive apres "
-                             "~18 frames de repos et ne sort pas du hasard.")
+                             "~18 frames de repos et ne sort pas du hasard. "
+                             "Avec --cell tcn : attention, ou sinon la moyenne.")
+    parser.add_argument("--tcn-norm", default="none", choices=("none", "batch"),
+                        help="TCN : BatchNormalization apres chaque convolution")
+    parser.add_argument("--tcn-kernel", type=int, default=3,
+                        help="TCN : taille du noyau des convolutions (defaut 3)")
+    parser.add_argument("--tcn-spatial-dropout", action="store_true",
+                        help="TCN : retirer des canaux entiers plutot que des "
+                             "valeurs isolees")
+    parser.add_argument("--tcn-dropout-end", action="store_true",
+                        help="TCN : un seul dropout apres le dernier bloc, aucun "
+                             "dans les blocs (aucune BatchNorm ne le suit alors)")
     parser.add_argument("--features-dir", default=None,
                         help="dossier de sequences (defaut : data/wlasl/features)")
     parser.add_argument("--vocab", type=int, default=50,
@@ -1607,7 +1947,20 @@ def main():
 
     if args.pretrain_cache and not args.pretrain_vocab:
         parser.error("--pretrain-cache demande --pretrain-vocab")
+    if args.phonology_pretrain and not (args.phonology and args.pretrain_vocab):
+        parser.error("--phonology-pretrain demande --phonology et --pretrain-vocab")
+    tcn_options = dict(tcn_norm=args.tcn_norm, tcn_kernel=args.tcn_kernel,
+                       tcn_spatial_dropout=args.tcn_spatial_dropout,
+                       tcn_dropout_end=args.tcn_dropout_end)
+    # Une option TCN sur un autre modele ne ferait rien, sans le dire.
+    if args.cell != "tcn" and any(
+            tcn_options[k] != defaults_ for k, defaults_ in
+            (("tcn_norm", "none"), ("tcn_kernel", 3), ("tcn_spatial_dropout", False),
+             ("tcn_dropout_end", False))):
+        parser.error("--tcn-norm, --tcn-kernel, --tcn-spatial-dropout et "
+                     "--tcn-dropout-end demandent --cell tcn")
     fingerprint = pretrain_fingerprint(args, device) if args.pretrain_cache else None
+    defaults = {action.dest: action.default for action in parser._actions}
     cached_folds = []
 
     probes = sorted({int(x) for x in args.pretrain_probe.split(",") if x.strip()})
@@ -1618,10 +1971,11 @@ def main():
             parser.error("les sondes doivent etre des epochs >= 1")
         args.pretrain_epochs = max(probes)
 
-    records = load_sequences(args.variants, args.features_dir,
-                             with_confidence=args.confidence,
-                             with_meta=gating,
-                             with_tips=args.tip_confidence)
+    records = cached_sequences(args.variants, args.features_dir,
+                               use_cache=not args.no_load_cache,
+                               with_confidence=args.confidence,
+                               with_meta=gating,
+                               with_tips=args.tip_confidence)
 
     if args.clips_from:
         reference = load_sequences(args.variants, args.clips_from, metadata_only=True)
@@ -1752,9 +2106,18 @@ def main():
 
         return batch
 
-    def prepared_epochs(x, y, count, classes, rng):
+    # Temps de preparation des epochs (CPU) et temps ou l entrainement l a
+    # attendue : si l attente grandit, c est la preparation qui limite.
+    timing = {"prepare": 0.0, "wait": 0.0, "epochs": 0}
+    PREP_CHUNKS = 16
+    prep_pool = (concurrent.futures.ThreadPoolExecutor(max_workers=args.prep_threads)
+                 if args.fast_prep else None)
+
+    def prepared_epochs(x, y, count, classes, rng, extra=None):
         """Les `count` epochs d entrainement : lots melanges, augmentes, mis
-        en colonnes.
+        en colonnes. `extra` : d autres etiquettes alignees sur x (les
+        composantes phonologiques), melangees dans le meme ordre ; la cible
+        devient alors une liste, une entree par sortie du modele.
 
         Chaque epoch est preparee sur le CPU (numpy) PENDANT que le GPU
         entraine la precedente ; avant, les deux alternaient et le GPU
@@ -1764,14 +2127,34 @@ def main():
         enregistre) est le meme, et les resultats aussi, au bit pres.
         """
         def prepare():
+            started = time.perf_counter()
             order = rng.permutation(len(x))
-            batch = augment_batch(x[order], rng, layout, args.hand_dropout)
-            if args.velocity:
-                batch = add_velocity(batch)
+            if args.fast_prep:
+                # Une graine par morceau, tiree de rng : le resultat ne depend
+                # pas du nombre de fils ni de l ordre ou ils finissent.
+                seeds = rng.integers(0, 2 ** 63, size=PREP_CHUNKS)
+                parts = np.array_split(order, PREP_CHUNKS)
+
+                def piece(i):
+                    part = augment_batch_fast(x[parts[i]], np.random.default_rng(seeds[i]),
+                                              layout, args.hand_dropout)
+                    if args.velocity:
+                        part = add_velocity(part)
+                    return to_model(part)
+
+                batch = np.concatenate(list(prep_pool.map(piece, range(PREP_CHUNKS))))
+            else:
+                batch = augment_batch(x[order], rng, layout, args.hand_dropout)
+                if args.velocity:
+                    batch = add_velocity(batch)
             target = y[order]
             if args.label_smoothing > 0:
                 target = tf.keras.utils.to_categorical(target, classes)
-            return to_model(batch), target
+            if extra is not None:
+                target = [target] + [labels_[order] for labels_ in extra]
+            ready = (batch if args.fast_prep else to_model(batch)), target
+            timing["prepare"] += time.perf_counter() - started
+            return ready
 
         if args.no_prefetch:
             for _ in range(count):
@@ -1780,7 +2163,10 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(prepare) if count else None
             for index in range(count):
+                waited = time.perf_counter()
                 ready = pending.result()
+                timing["wait"] += time.perf_counter() - waited
+                timing["epochs"] += 1
                 pending = pool.submit(prepare) if index + 1 < count else None
                 yield ready
 
@@ -1821,6 +2207,7 @@ def main():
     # de ceux qui le precedent, et --only-fold irreproductible.
     scores = []
     histories = []
+    recal_histories = []
     out_of_fold = []
     seed_curves = []
     pretrain_curves = []
@@ -1841,10 +2228,12 @@ def main():
         # Les variantes se filtrent separement : voir --pretrain-variants.
         # Les confiances par main ne sont lues que si l echafaudage est
         # filtre : sans elles, --gate-pretrain plantait sur r["meta"] vide.
-        extra = load_sequences(args.pretrain_variants or args.variants,
-                               args.features_dir,
-                               with_confidence=args.confidence,
-                               with_meta=gating and args.gate_pretrain)
+        extra = cached_sequences(args.pretrain_variants or args.variants,
+                                 args.features_dir,
+                                 use_cache=not args.no_load_cache,
+                                 with_confidence=args.confidence,
+                                 with_meta=gating and args.gate_pretrain,
+                                 with_tips=False)
         # Les n premiers signes CIBLE COMPRISE, comme pour WLASL : avec ASL
         # Citizen, --pretrain-vocab 400 donne les rangs 1 a 400.
         wide = top_glosses(extra, args.pretrain_vocab)
@@ -1876,6 +2265,36 @@ def main():
         print(f"pre-entrainement : {len(extra)} sequences, "
               f"{len(wide)} gloses{note}\n")
 
+    phonology = pre_phonology = None
+    phonology_sizes = []
+    if args.phonology:
+        table = phonology_table(args.features_dir or FEATURES_DIR)
+        used = {r["gloss"] for r in records}
+        if pretrain_x is not None:
+            used |= {r["gloss"] for r in extra}
+        absent = sorted(used - set(table))
+        if absent:
+            parser.error(f"--phonology : {len(absent)} gloses absentes d ASL-LEX "
+                         f"({', '.join(absent[:5])}...)")
+        # Un vocabulaire par composante, sur la cible ET l echafaudage : les
+        # tetes ont la meme taille au pre-entrainement et a l affinage, et
+        # peuvent passer de l un a l autre.
+        values = [sorted({table[g][k] for g in used} - {None})
+                  for k in range(len(PHONOLOGY))]
+        phonology_sizes = [len(v) for v in values]
+
+        def encode(items):
+            return [np.array([values[k].index(table[r["gloss"]][k])
+                              if table[r["gloss"]][k] is not None else -1
+                              for r in items], dtype=np.int32)
+                    for k in range(len(PHONOLOGY))]
+
+        phonology = encode(records)
+        if pretrain_x is not None:
+            pre_phonology = encode(extra)
+        print("phonologie (poids {}) : {}\n".format(args.phonology, ", ".join(
+            f"{c.split('.')[0]} {n}" for c, n in zip(PHONOLOGY, phonology_sizes))))
+
     for fold_index, held in enumerate(folds, start=1):
         if only_folds and fold_index not in only_folds:
             # On saute DANS la boucle : enumerate garde donc son index, et
@@ -1900,6 +2319,8 @@ def main():
             train_mask = narrowed
 
         train_x, train_y = features[train_mask], labels[train_mask]
+        train_phonology = ([labels_[train_mask] for labels_ in phonology]
+                           if phonology is not None else None)
 
         test_x, test_y = features[test_mask], labels[test_mask]
 
@@ -1914,6 +2335,7 @@ def main():
         # et c'est precisement cette variance que l'ensemble convertit en
         # precision.
         curves = []
+        recal_curves = []
         probe_curves = {probe: [] for probe in probe_list}
         # Jamais partage ENTRE folds : le pre-entrainement exclut les signeurs
         # du fold de test, donc le reutiliser ailleurs serait une fuite.
@@ -1927,7 +2349,7 @@ def main():
                                 args.cell, args.label_smoothing, args.project,
                                 raw_dim=raw_dim, readout=args.readout,
                                 clipnorm=args.clipnorm or None,
-                                layer_norm=args.layer_norm)
+                                layer_norm=args.layer_norm, **tcn_options)
 
             reuse = args.shared_pretrain and shared is not None
             pretrain_now = pretrain_x is not None and not reuse
@@ -1936,7 +2358,7 @@ def main():
             if pretrain_now and args.pretrain_cache:
                 cache_path = os.path.join(args.pretrain_cache,
                                           f"fold{fold_index}_seed{seed_index}.pkl")
-                cached = load_pretrain(cache_path, fingerprint)
+                cached = load_pretrain(cache_path, fingerprint, defaults)
 
             if pretrain_now and cached is None:
                 # Les signeurs du fold de test sont exclus du pre-entrainement
@@ -1946,21 +2368,56 @@ def main():
                                    args.cell, args.label_smoothing, args.project,
                                    raw_dim=raw_dim, readout=args.readout,
                                    clipnorm=args.clipnorm or None,
-                                   layer_norm=args.layer_norm)
+                                   layer_norm=args.layer_norm, **tcn_options)
                 snapshots = {}
+                head_snapshots = {}
                 # La boucle tournait sans rien rapporter : impossible de dire
                 # apres coup si 60 epochs suffisaient, si c etait trop, ou si
                 # le pre-entrainement avait seulement commence a converger.
                 # On garde donc sa precision, sur sa propre tache.
                 pretrain_curve = []
+                head_trainer, head_heads = head, []
+                if args.phonology_pretrain:
+                    head_trainer, head_heads = add_phonology_heads(
+                        head, phonology_sizes, args.phonology,
+                        args.clipnorm or None, args.label_smoothing)
+                if args.pretrain_scaling != "none":
+                    k = (args.pretrain_batch or args.batch) / args.batch
+                    optimizer = head_trainer.optimizer
+                    optimizer.learning_rate = float(optimizer.learning_rate) * k ** 0.5
+                    if args.pretrain_scaling == "adam":
+                        optimizer.beta_1 = 1 - k * (1 - optimizer.beta_1)
+                        optimizer.beta_2 = 1 - k * (1 - optimizer.beta_2)
+                        optimizer.epsilon = optimizer.epsilon / k ** 0.5
+                    if seed_index == 0:
+                        print(f"    Adam du pre-entrainement : lot "
+                              f"{args.pretrain_batch or args.batch}, taux "
+                              f"{float(optimizer.learning_rate):.2e}, beta1 "
+                              f"{optimizer.beta_1:.3f}, beta2 {optimizer.beta_2:.4f}, "
+                              f"epsilon {optimizer.epsilon:.1e}", flush=True)
+                timing.update(prepare=0.0, wait=0.0, epochs=0)
+                pretrain_started = time.perf_counter()
                 pretrain_batches = prepared_epochs(
                     pretrain_x[keep], pretrain_y[keep], args.pretrain_epochs,
-                    len(set(pretrain_y)), rng)
+                    len(set(pretrain_y)), rng,
+                    extra=([labels_[keep] for labels_ in pre_phonology]
+                           if args.phonology_pretrain else None))
+                fit_times = []
                 for index, (px, py) in enumerate(pretrain_batches):
-                    history = head.fit(px, py, batch_size=args.batch,
-                                       epochs=1, verbose=0)
-                    pretrain_curve.append(round(
-                        float(history.history["accuracy"][0]), 4))
+                    fit_started = time.perf_counter()
+                    history = head_trainer.fit(px, py,
+                                               batch_size=args.pretrain_batch or args.batch,
+                                               epochs=1, verbose=0)
+                    fit_times.append(time.perf_counter() - fit_started)
+                    pretrain_curve.append(round(float(sign_accuracy(history)), 4))
+                    # La courbe n etait ecrite qu a la fin : un run tue en
+                    # cours de pre-entrainement ne laissait rien a lire. La
+                    # moyenne de 10 epochs lisse le bruit d une epoch a l autre.
+                    if seed_index == 0 and (index + 1) % 10 == 0:
+                        print(f"      pre-entrainement e{index + 1}/{args.pretrain_epochs}"
+                              f"  {pretrain_curve[-1]:.3f}  (moyenne e{index - 8}-"
+                              f"{index + 1} : {np.mean(pretrain_curve[-10:]):.3f})",
+                              flush=True)
 
                     # Poids figes aux points demandes. Les sondes partagent
                     # ainsi UNE trajectoire : des runs separes en auraient
@@ -1969,7 +2426,22 @@ def main():
                     if probes and (index + 1) in probes:
                         snapshots[index + 1] = [
                             layer.get_weights() for layer in head.layers[:-1]]
+                        # Les tetes phonologiques du MEME instant : sans elles,
+                        # l affinage depuis une sonde partait des tetes de la
+                        # derniere epoch, accordees a un autre tronc.
+                        head_snapshots[index + 1] = [h.get_weights() for h in head_heads]
 
+                if len(fit_times) > 2 and seed_index == 0:
+                    # Mediane hors premiere epoch (compilation XLA) : le temps
+                    # du seul entrainement, a comparer au total par epoch.
+                    print(f"    entrainement seul : {np.median(fit_times[1:]):.2f} s "
+                          f"par epoch (mediane)", flush=True)
+                if pretrain_curve and seed_index == 0 and timing["epochs"]:
+                    total = time.perf_counter() - pretrain_started
+                    n = timing["epochs"]
+                    print(f"    duree par epoch : {total / n:.1f} s, dont preparation "
+                          f"{timing['prepare'] / n:.1f} s (en parallele) et attente "
+                          f"des donnees {timing['wait'] / n:.1f} s", flush=True)
                 if pretrain_curve and seed_index == 0:
                     marks = [0, len(pretrain_curve) // 4,
                              len(pretrain_curve) // 2, len(pretrain_curve) - 1]
@@ -1984,7 +2456,9 @@ def main():
                 # Les poids, et l etat du generateur a la fin du
                 # pre-entrainement : l affinage tire ensuite les memes lots et
                 # les memes augmentations qu apres un pre-entrainement fait ici.
-                shared = {"final": cached["final"], "snapshots": cached["snapshots"]}
+                shared = {"final": cached["final"], "snapshots": cached["snapshots"],
+                          "heads": cached.get("heads"),
+                          "head_snapshots": cached.get("head_snapshots") or {}}
                 rng.bit_generator.state = cached["rng"]
                 cached_folds.append(fold_index)
                 if seed_index == 0:
@@ -1996,11 +2470,17 @@ def main():
                 shared = {
                     "final": [l.get_weights() for l in head.layers[:-1]],
                     "snapshots": {k: v for k, v in snapshots.items()},
+                    # Les tetes phonologiques ont les memes valeurs pour tous
+                    # les signes : elles passent a l affinage, contrairement a
+                    # la tete du signe, dont les classes changent.
+                    "heads": [h.get_weights() for h in head_heads] or None,
+                    "head_snapshots": head_snapshots,
                 }
                 if args.pretrain_cache:
                     save_pretrain(cache_path, {
                         "fingerprint": fingerprint, "final": shared["final"],
-                        "snapshots": shared["snapshots"],
+                        "snapshots": shared["snapshots"], "heads": shared["heads"],
+                        "head_snapshots": shared["head_snapshots"],
                         "rng": rng.bit_generator.state, "curve": pretrain_curve})
 
             if args.pretrain_cache and pretrain_x is not None:
@@ -2024,7 +2504,7 @@ def main():
                                         args.project, raw_dim=raw_dim,
                                         readout=args.readout,
                                         clipnorm=args.clipnorm or None,
-                                        layer_norm=args.layer_norm)
+                                        layer_norm=args.layer_norm, **tcn_options)
 
                 if pretrain_x is not None:
                     # Tout sauf la couche de sortie, dont le nombre de classes
@@ -2035,11 +2515,37 @@ def main():
                         if weights:
                             target.set_weights(weights)
 
+                # Avec --phonology on entraine `trainer`, qui partage ses
+                # couches avec `fresh` : fresh.predict ci-dessous lit donc le
+                # modele entraine, et ne rend que le signe.
+                trainer = fresh
+                if args.phonology:
+                    trainer, heads = add_phonology_heads(
+                        fresh, phonology_sizes, args.phonology,
+                        args.clipnorm or None, args.label_smoothing)
+                    head_source = shared.get("heads") if pretrain_x is not None else None
+                    if probe is not None and shared.get("head_snapshots", {}).get(probe):
+                        head_source = shared["head_snapshots"][probe]
+                    if head_source:
+                        for head_layer, weights in zip(heads, head_source):
+                            head_layer.set_weights(weights)
+
                 curve = []
+                # Avec --bn-recalibration et des BatchNorm, chaque epoch est
+                # notee deux fois (mesure faite : +0.1 point, du bruit ; elle
+                # doublait presque la duree de l affinage) : telle
+                # quelle, puis BatchNorm remesuree sans dropout sur les clips
+                # de l epoch (augmentes, comme l entrainement : seul l effet du
+                # dropout change). Les statistiques sont ensuite remises : les
+                # poids et la suite du run sont ceux d un run sans la mesure.
+                norms = (bn_probes(fresh) if args.bn_recalibration
+                         and probe is probe_list[-1] else [])
+                recal = []
                 for batch_x, fit_y in prepared_epochs(train_x, train_y, args.epochs,
-                                                      len(glosses), rng):
-                    fresh.fit(batch_x, fit_y, batch_size=args.batch,
-                              epochs=1, verbose=0)
+                                                      len(glosses), rng,
+                                                      extra=train_phonology):
+                    trainer.fit(batch_x, fit_y, batch_size=args.batch,
+                                epochs=1, verbose=0)
 
                     probabilities = fresh.predict(eval_x, verbose=0)
                     if args.tta:
@@ -2049,7 +2555,18 @@ def main():
                             mirror_x, verbose=0)
                     curve.append(probabilities)
 
+                    if norms:
+                        saved = recalibrate_bn(norms, batch_x, args.batch)
+                        recalibrated = fresh.predict(eval_x, verbose=0)
+                        if args.tta:
+                            recalibrated = recalibrated + fresh.predict(
+                                mirror_x, verbose=0)
+                        restore_bn(norms, saved)
+                        recal.append(recalibrated)
+
                 probe_curves[probe].append(curve)
+                if norms:
+                    recal_curves.append(recal)
 
             curves = probe_curves[probe_list[-1]]
 
@@ -2087,6 +2604,18 @@ def main():
             "labels": [int(y) for y in test_y],
             "probabilities": np.round(tail_probabilities, 5).tolist(),
         })
+        if recal_curves:
+            recal_curve = []
+            for epoch in range(args.epochs):
+                summed = sum(c[epoch] for c in recal_curves)
+                recal_curve.append(round(float((summed.argmax(axis=1) == test_y).mean()), 4))
+            recal_histories.append(recal_curve)
+            recal_tail = sum(sum(c[epoch] for c in recal_curves) for epoch in window)
+            out_of_fold[-1]["probabilities_bn_recalibrated"] = np.round(
+                recal_tail / (len(recal_curves) * len(window)), 5).tolist()
+            print(f"    BatchNorm remesuree sans dropout : plateau "
+                  f"{np.mean([recal_curve[e] for e in window]):.4f}  (telle quelle "
+                  f"{np.mean([curve[e] for e in window]):.4f})", flush=True)
 
         # Precision selon le NOMBRE de graines moyennees, sur la meme fenetre
         # de 30 epochs que la metrique rapportee. Les rendements de
@@ -2189,6 +2718,20 @@ def main():
                 "readout": args.readout,
                 "clipnorm": args.clipnorm or None,
                 "layer_norm": args.layer_norm,
+                "tcn_norm": args.tcn_norm,
+                "tcn_kernel": args.tcn_kernel,
+                "tcn_spatial_dropout": args.tcn_spatial_dropout,
+                "tcn_dropout_end": args.tcn_dropout_end,
+                "pretrain_batch": args.pretrain_batch or args.batch,
+                "pretrain_scaling": args.pretrain_scaling,
+                "fast_prep": args.fast_prep,
+                # Meme modele, memes poids, BatchNorm remesuree sans dropout
+                # avant chaque evaluation (bn_probes). None sans BatchNorm.
+                "curves_bn_recalibrated": recal_histories or None,
+                "phonology": args.phonology or None,
+                "phonology_pretrain": args.phonology_pretrain,
+                "phonology_components": ({c: n for c, n in zip(PHONOLOGY, phonology_sizes)}
+                                         if phonology_sizes else None),
                 "pretrain_cache": args.pretrain_cache or None,
                 "pretrain_cached_folds": sorted(set(cached_folds)),
                 "vocab": args.vocab,

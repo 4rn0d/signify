@@ -38,7 +38,9 @@ CONFIG_KEYS = (
     "device",
     # Comment le GRU rend sa reponse, et ce qui le stabilise : un fold a etat
     # final et un fold a attention ne sont pas le meme modele.
-    "readout", "layer_norm", "clipnorm",
+    "readout", "layer_norm", "clipnorm", "phonology", "phonology_pretrain",
+    "tcn_norm", "tcn_kernel", "tcn_spatial_dropout", "tcn_dropout_end",
+    "pretrain_batch", "pretrain_scaling", "fast_prep",
 )
 
 
@@ -125,11 +127,11 @@ def main():
     # out_of_fold porte les predictions de chaque fold (matrice de confusion) ;
     # pretrain_curves la courbe de pre-entrainement de chaque fold.
     for field in ("per_fold", "per_fold_plateau", "curves", "by_seed_count",
-                  "out_of_fold", "pretrain_curves"):
+                  "out_of_fold", "pretrain_curves", "curves_bn_recalibrated"):
         values = []
         for fold in order:
             _, data, position = by_fold[fold]
-            if field in data and position < len(data[field]):
+            if data.get(field) and position < len(data[field]):
                 values.append(data[field][position])
         if values:
             merged[field] = values
