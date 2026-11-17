@@ -9,14 +9,22 @@ import 'package:frontend/theme/app_theme.dart';
 import 'package:frontend/game/menu_map.dart';
 
 class MenuGame extends FlameGame with DragCallbacks {
-  MenuGame({required VoidCallback onGragasPressed}) {
+  MenuGame({
+    required VoidCallback onGragasPressed,
+    required VoidCallback onQuestsPressed,
+    required VoidCallback onLeaderboardPressed,
+    required VoidCallback onSettingsPressed,
+  }) {
     menu = Menu(
       onGragasPressed: onGragasPressed,
+      onQuestsPressed: onQuestsPressed,
+      onLeaderboardPressed: onLeaderboardPressed,
+      onSettingsPressed: onSettingsPressed,
       onRoomPositionsLoaded: _setRoomPositions,
     );
   }
 
-  static const _roomViewWidth = 820.0;
+  static const _roomViewWidth = 700.0;
   static const _tileSize = 16.0;
   static const _swipeThreshold = 48.0;
   static const _roomTransitionDuration = 0.35;

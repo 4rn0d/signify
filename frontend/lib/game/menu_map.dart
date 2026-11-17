@@ -4,6 +4,7 @@ import 'package:flame/flame.dart';
 import 'package:flame/components.dart';
 import 'package:flame_tiled/flame_tiled.dart';
 import 'package:frontend/game/gragas_map_button.dart';
+import 'package:frontend/game/map_action_hotspot.dart';
 
 String sanitizeMenuTmx(String tmx) {
   return tmx.replaceAllMapped(RegExp(r'<tileset\b[^>]*>'), (match) {
@@ -16,10 +17,16 @@ String sanitizeMenuTmx(String tmx) {
 class Menu extends World {
   Menu({
     required this.onGragasPressed,
+    required this.onQuestsPressed,
+    required this.onLeaderboardPressed,
+    required this.onSettingsPressed,
     required this.onRoomPositionsLoaded,
   });
 
   final void Function() onGragasPressed;
+  final void Function() onQuestsPressed;
+  final void Function() onLeaderboardPressed;
+  final void Function() onSettingsPressed;
   final void Function(Map<String, Vector2> positions) onRoomPositionsLoaded;
   late TiledComponent menu;
 
@@ -51,8 +58,50 @@ class Menu extends World {
     );
     add(
       GragasMapButton(
-          position: Vector2(gragasObject.x, gragasObject.y),
-          onPressed: onGragasPressed
+        position: Vector2(gragasObject.x, gragasObject.y),
+        onPressed: onGragasPressed,
+      ),
+    );
+
+    final questsObject = buttonLayer.objects.singleWhere(
+      (object) => object.name == 'quests',
+    );
+    add(
+      MapActionHotspot.fromPolygon(
+        objectPosition: Vector2(questsObject.x, questsObject.y),
+        polygonPoints: [
+          for (final point in questsObject.polygon)
+            Vector2(point.x.toDouble(), point.y.toDouble()),
+        ],
+        onPressed: onQuestsPressed,
+      ),
+    );
+
+    final leaderboardObject = buttonLayer.objects.singleWhere(
+      (object) => object.name == 'leader_board',
+    );
+    add(
+      MapActionHotspot.fromPolygon(
+        objectPosition: Vector2(leaderboardObject.x, leaderboardObject.y),
+        polygonPoints: [
+          for (final point in leaderboardObject.polygon)
+            Vector2(point.x.toDouble(), point.y.toDouble()),
+        ],
+        onPressed: onLeaderboardPressed,
+      ),
+    );
+
+    final settingsObject = buttonLayer.objects.singleWhere(
+      (object) => object.name == 'settings',
+    );
+    add(
+      MapActionHotspot.fromPolygon(
+        objectPosition: Vector2(settingsObject.x, settingsObject.y),
+        polygonPoints: [
+          for (final point in settingsObject.polygon)
+            Vector2(point.x.toDouble(), point.y.toDouble()),
+        ],
+        onPressed: onSettingsPressed,
       ),
     );
 

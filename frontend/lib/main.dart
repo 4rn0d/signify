@@ -2,6 +2,7 @@ import 'package:flame/game.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
+import 'package:frontend/pages/map_destination_placeholder.dart';
 import 'package:frontend/pages/training_page.dart';
 import 'package:frontend/theme/app_theme.dart';
 
@@ -22,6 +23,36 @@ Future<void> main() async {
           navigatorKey.currentState?.push(
             MaterialPageRoute<void>(
               builder: (_) => const TrainingPage(),
+            ),
+          );
+        },
+        onQuestsPressed: () {
+          navigatorKey.currentState?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => const MapDestinationPlaceholder(
+                title: 'Quests',
+                icon: Icons.menu_book_outlined,
+              ),
+            ),
+          );
+        },
+        onLeaderboardPressed: () {
+          navigatorKey.currentState?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => const MapDestinationPlaceholder(
+                title: 'Leaderboard',
+                icon: Icons.leaderboard_outlined,
+              ),
+            ),
+          );
+        },
+        onSettingsPressed: () {
+          navigatorKey.currentState?.push(
+            MaterialPageRoute<void>(
+              builder: (_) => const MapDestinationPlaceholder(
+                title: 'Settings',
+                icon: Icons.settings_outlined,
+              ),
             ),
           );
         },

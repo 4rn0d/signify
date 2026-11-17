@@ -4,9 +4,10 @@ import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:frontend/game/gragas_game.dart';
+import 'package:frontend/game/tavern_hover_glow.dart';
 
 class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
-    with TapCallbacks, HasGameReference<FlameGame> {
+    with TapCallbacks, HoverCallbacks, HasGameReference<FlameGame> {
   GragasMapButton({
     required super.position,
     required this.onPressed,
@@ -17,6 +18,7 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
         );
 
   final VoidCallback onPressed;
+  bool _hovered = false;
 
   @override
   Future<void> onLoad() async {
@@ -28,6 +30,27 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
   void onTapUp(TapUpEvent event) {
     current = GragasAnimation.throwBarrel;
     animationTicker?.reset();
+  }
+
+  @override
+  void onHoverEnter() => _hovered = true;
+
+  @override
+  void onHoverExit() => _hovered = false;
+
+  @override
+  void render(Canvas canvas) {
+    if (_hovered) {
+      final path = Path()
+        ..addRRect(
+          RRect.fromRectAndRadius(
+            size.toRect(),
+            const Radius.circular(8),
+          ),
+        );
+      renderTavernHoverGlow(canvas, path);
+    }
+    super.render(canvas);
   }
 
   @override
