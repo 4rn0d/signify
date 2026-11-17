@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
+import 'package:frontend/theme/app_theme.dart';
 import 'package:frontend/game/menu_map.dart';
 
 class MenuGame extends FlameGame with DragCallbacks {
@@ -32,7 +33,7 @@ class MenuGame extends FlameGame with DragCallbacks {
   double _transitionElapsed = 0;
 
   @override
-  Color backgroundColor() => const Color(0xFFF6F3EB);
+  Color backgroundColor() => TavernPalette.canvas;
 
   @override
   FutureOr<void> onLoad() {

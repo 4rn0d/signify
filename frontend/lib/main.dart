@@ -3,10 +3,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
 import 'package:frontend/pages/training_page.dart';
+import 'package:frontend/theme/app_theme.dart';
 
 import 'auth_gate.dart';
 import 'firebase_options.dart';
 import 'pages/home_page.dart';
+import 'widgets/map_hud.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,17 +49,17 @@ class SignifyApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       title: 'Signify',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF5B6BD5),
-          surface: const Color(0xFFFFFCF6),
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF6F3EB),
-        splashFactory: InkRipple.splashFactory,
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
       home: AuthGate(
-        menu: game == null ? const HomePage() : GameWidget(game: game),
+        menu: game == null
+            ? const HomePage()
+            : GameWidget<MenuGame>(
+                game: game,
+                overlayBuilderMap: {
+                  'MapHud': (context, _) => const MapHud(),
+                },
+                initialActiveOverlays: const ['MapHud'],
+              ),
         authStatus: authStatus,
       ),
     );
