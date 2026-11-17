@@ -5,17 +5,19 @@ a webcam, rebuilt on a different dataset. The WLASL notebook stays the record
 of how the pipeline was built and why; this one records what changed when the
 data did.
 
-**Current state (3 November):** the GRU baseline is measured, **0.8610 ±
-0.0073** on 100 signs, signer-disjoint 5-fold (§7 item 3b), against 0.762 on
-50 signs for WLASL's best. All 12,270 clips are extracted (3,089 target, 9,181
-pretraining). Getting there took five fixes, all in §7 3b: time-warp only ever
+**Current state (16 November):** a TCN recipe reaches **0.8864 ± 0.0102**
+on 100 signs, signer-disjoint 5-fold, **+2.4 points over the GRU baseline on
+every fold** (p = 0.002; §7 item 3c). It combines an attention readout,
+BatchNorm, spatial dropout and 128 channels with phonology heads in
+pretraining and fine-tuning and 150 pretraining epochs. A 5-fold now takes
+31 minutes instead of ~7 hours (XLA, batch 128 with Adam scaled by the
+square-root rule, parallel data preparation, a load cache). The GRU baseline
+(**0.8610 ± 0.0073**, §7 3b) took five fixes to reach: time-warp only ever
 sped signs up, hand-shape ratios reached 900,000 on turned or folded hands,
-`--gate-pretrain` crashed, the GRU's last-state readout never left chance (now
-`--readout attention`), and one fold collapsed (redone at another seed;
-`--layer-norm` prevents it on that seed). Next: a k-fold with `--layer-norm`
-against the baseline, then the four queued improvements (§7 3a).
-The shipped model is still the WLASL one (0.7623 expected on 50 signs), and
-the demo behaves exactly as before until it is replaced.
+`--gate-pretrain` crashed, the GRU's last-state readout never left chance,
+and one fold collapsed. Next: three remaining 5-fold checks of the recipe,
+then `train_final` with it. The demo and the app's backend still run a
+1-seed GRU model for live testing (§7 item 7).
 
 ---
 
@@ -553,8 +555,9 @@ In rough order of when they block something:
    `bench_cells.py` checks reloading on real clips, which is what the demo
    feeds the model.
 3a. **Queued until the baseline exists — decided, not to start before.** The
-   baseline now exists (3b); the `--layer-norm` k-fold comes first, since it
-   decides the model the four below are built on. Four
+   baseline now exists (3b). Item 1, phonology, is part of the TCN recipe
+   (3c), in pretraining as well as fine-tuning; item 2's ensemble of GRU and
+   TCN gained nothing once both had it (3c). Four
    improvements, in the order they should be tried, each to be measured against
    the GRU baseline on the same folds:
    1. **Phonology as auxiliary targets.** Besides the sign, the model predicts
@@ -737,6 +740,42 @@ In rough order of when they block something:
    pretrainings (as designed: the fingerprint covers the model code). A run
    with `--layer-norm` needs its own pretrainings anyway.
 
+   **Budget: 40 epochs, not 90.** Fine-tuning reaches its plateau within ~20
+   epochs, since pretraining (ranks 1-400) already covers the target signs:
+   the baseline scores 0.8626 on epochs 11-40 and 0.8628 on 61-90. The 90-epoch
+   run was stopped. `compare_kfold.py` pairs any experiment with the baseline
+   on the experiment's own last 30 epochs, read from the baseline's curves, and
+   warns when a curve is still rising at the end of that window.
+
+   **Result: LayerNorm + phonology, rejected (5 November).** One k-fold tested
+   both together, to save a run: `--layer-norm --phonology 0.3`, 40 epochs,
+   pretraining without the phonology heads.
+
+   ```
+   epochs 11-40     1        2        3        4        5      mean
+   baseline       0.8668   0.8713   0.8578   0.8624   0.8546   0.8626
+   LN + phonology 0.8668   0.8606   0.8433   0.8592   0.8399   0.8539
+   gap           -0.0001  -0.0107  -0.0145  -0.0031  -0.0147  -0.0086
+   ```
+
+   0/5 folds up, paired t = -2.88, p = 0.045. The still-rising warning fires
+   (+0.0061 within the window, threshold 0.005), but on epochs 31-40 the gap
+   is still 0.76 point (0.8563 against 0.8639): more epochs would not close it.
+
+   The pretraining differed only by LayerNorm, and it ended lower on four
+   folds (e60: -0.009 to -0.031). The fine-tuning gap follows it fold by fold
+   (correlation 0.98), and fold 1, where both pretrainings reached 0.723,
+   shows no gap at all. So the loss is LayerNorm's, through a slower
+   pretraining. Phonology looks neutral, but that rests on fold 1 alone.
+   (Fold 5 also compares seed 500 against the baseline's seed 501.)
+   LayerNorm stays off, as it already is in `train_final.py` and in the live
+   model. A collapse is caught by `train_final`'s guard at pretraining epoch
+   10, and a collapsed k-fold fold is rerun at another seed.
+
+   Both pretrainings were still rising at e60, by 2 to 3 points between
+   epochs 41-50 and 51-60. Since fine-tuning follows pretraining this
+   closely, longer pretraining is a candidate.
+
    **Prefetch.** Each epoch is now prepared on the CPU while the GPU trains
    the previous one (`--no-prefetch` restores the old order). Checked
    bit-identical (curves, probabilities, pretraining) on fold 5. Gain: 17% on
@@ -745,6 +784,126 @@ In rough order of when they block something:
 
    The official splits also exist and would allow comparison with the
    published baseline, which covers all 2,731 signs, not 100.
+3c. **The TCN recipe: 0.8864, +2.4 over the GRU baseline (11-16 November).**
+   Fold 1 first, to screen; then 5 folds for the verdict. All scores here are
+   the mean over fine-tuning epochs 11-40 (the 40-epoch budget of 3b).
+
+   **Phonology in both phases, 150 pretraining epochs (GRU).** The heads of
+   3b, now also trained during pretraining (`--phonology-pretrain`) and
+   carried into fine-tuning. Fold 1: **0.8805 against 0.8668**. Pretraining
+   reached 0.746 at e60 against the baseline's 0.723, and flattened near 150
+   (0.805, last gains +0.5, +0.5, +0.3 per 10 epochs). `train_kfold` now
+   prints pretraining accuracy every 10 epochs: before, a run killed during
+   pretraining left nothing to read. Fine-tuning starts higher (0.835 at
+   epoch 2 against 0.767) and is flat from epoch ~10.
+
+   **TCN against GRU, base recipe, 5 folds: a tie,** 0.8627 against 0.8626
+   (p = 0.98). Its pretraining was far higher (0.823 at e60 against 0.723)
+   for nothing: pretraining accuracy measures fit to the 400 scaffold signs
+   and does not compare across architectures. Averaging GRU and TCN
+   predictions gained +1.2 on all 5 folds (their errors differ on ~8% of
+   clips), but on fold 1 the GRU with phonology alone (0.901 on averaged
+   predictions) already matched GRU + TCN, with or without phonology. The
+   ensemble was dropped.
+
+   **TCN variants, one at a time** (fold 1, 60 pretraining epochs, no
+   phonology; options of `build_tcn`, each off by default so the original
+   TCN is unchanged, checked weight for weight):
+
+   ```
+                                  e11-40   pretraining e60
+   TCN                            0.8628       0.823
+   --readout attention            0.8717       0.839     ~36 of 80 frames are rest
+   --tcn-norm batch               0.8640       0.633     learns slowly, still rising
+   --tcn-spatial-dropout          0.8790       0.731     whole channels dropped
+   --tcn-kernel 5                 0.8630       0.859
+   --units 128                    0.8680       0.821     faster, not higher
+   ```
+
+   **Combined** (attention + BatchNorm + spatial dropout + 128 channels,
+   phonology in both phases, 150 epochs), fold 1: **0.9000**. Dropout before
+   BatchNorm makes BatchNorm learn the noisier training scale ("variance
+   shift", Li et al., CVPR 2019); `--bn-recalibration` scores each epoch a
+   second time with BatchNorm re-measured without dropout: +0.1, negligible,
+   so `--tcn-dropout-end` (one dropout after the last block) was not run.
+   200 pretraining epochs instead of 150: pretraining +2.6 points, test +0.1.
+   150 stays.
+
+   **Speed: a fold went from ~86 min to ~7.** The GPU was 38% busy and the
+   training process used one CPU core: each step is many small GPU
+   operations, and the time went into the gaps between them. Synthetic
+   timing of one pretraining epoch (combined TCN, 9,800 clips):
+
+   ```
+                                         lot 32    lot 128
+   deterministic (as before)             25.8 s     6.8 s
+   non-deterministic, no XLA             22.7 s     6.1 s
+   non-deterministic, XLA                 2.3 s     1.5 s
+   ```
+
+   - **XLA** merges those operations; Keras refuses it whenever op
+     determinism is on, so it comes only without `--deterministic`. Runs are
+     then not bit-reproducible. Mixed precision and `steps_per_execution`
+     gained nothing: the GPU's arithmetic was never the bottleneck.
+   - **Batch 128 for pretraining** (`--pretrain-batch 128`), Adam adapted by
+     the square-root rule of Malladi et al. (NeurIPS 2022, def. 5.2):
+     learning rate x sqrt(k), 1-beta1 and 1-beta2 x k, epsilon / sqrt(k), here
+     2e-3, 0.6, 0.996, 5e-8 (`--pretrain-scaling adam`). Scaling only the
+     learning rate did worse (0.8855 against 0.8925, deterministic). The
+     linear rule of Goyal et al. is for SGD. Batch 256 would put beta1 at 0.2,
+     near the rule's limit: not tried.
+   - **Data preparation** became the next limit. `--fast-prep` splits each
+     epoch into 16 chunks prepared on several threads, with an augmentation
+     without the per-clip Python loop (`augment_batch_fast`, checked equal to
+     `time_warp` and to the frame dropout on fixed draws; same laws, other
+     random numbers): 3.8 s -> 1.0 s per epoch, hidden behind the GPU (0.0 s
+     of waiting). The threads still cost training ~0.5 s per epoch through
+     Python's lock (1.88 s against 1.36 s without them); worker processes
+     would recover it but fork a TensorFlow process: not done.
+   - **Load cache:** the 12,270 files were read twice per run (~2.5 min, 22 s
+     of it just reading through WSL's bridge to the Windows disk).
+     `cached_sequences` loads them once and keeps one 435 MB file in
+     `data/asl_citizen/load_cache/` (git-ignored), keyed by the file names,
+     sizes and dates, the options and the loading code: 4 s afterwards.
+   - `--bn-recalibration` is now opt-in: it nearly doubled fine-tuning.
+   - WSL's memory was raised to 12 GB (`%USERPROFILE%\.wslconfig`) to run
+     two trainings at once; a run now takes ~6.6 GB, so they go one at a
+     time.
+
+   **The noise on one fold is about one point.** The same recipe at batch
+   128 scored 0.8925 deterministic and 0.9051 with XLA and the new
+   augmentation draws. So on fold 1, every gap under ~1 point above is
+   unresolved: BatchNorm, 128 channels, kernel 5, 200 epochs, and batch 128
+   itself. Fold 1 also turned out to be the friendliest fold (0.903 against a
+   5-fold mean of 0.886).
+
+   **Result (16 November): 0.8864 ± 0.0102 on 5 folds, +2.38 over the
+   baseline on every fold** (paired t = 7.34, p = 0.002; 31 minutes for the
+   five folds). Errors on unseen signers drop from 13.7% to 11.4%.
+
+   ```
+   epochs 11-40     1        2        3        4        5      mean
+   baseline       0.8668   0.8713   0.8578   0.8624   0.8546   0.8626
+   TCN recipe     0.9028   0.8902   0.8806   0.8859   0.8723   0.8864
+   gap           +0.0360  +0.0189  +0.0228  +0.0235  +0.0177  +0.0238
+   ```
+
+   ```
+   --cell tcn --readout attention --tcn-norm batch --tcn-spatial-dropout
+   --units 128 --phonology 0.3 --phonology-pretrain --pretrain-epochs 150
+   --pretrain-batch 128 --pretrain-scaling adam --fast-prep
+   (+ the baseline's features, gating, vocabulary and augmentation options;
+   no --deterministic)
+   ```
+
+   Fine-tuning is flat at the end (+0.001 within the window). Results:
+   `models/aslc_kfold_tcn_xla_5fold.json`. The other result files of this
+   section keep their scores and curves but not the per-clip predictions
+   (95% of their size); full copies stay in `models/full/`, outside git.
+
+   Still to settle on 5 folds: without BatchNorm, with 96 channels, with
+   kernel 5. `train_final.py` does not know the TCN options, phonology or
+   batch scaling yet (item 7).
 4. **Clips under 24 fps** (2.6%, P49 alone 1,205 of them) are resampled with
    duplicate frames, as a slow webcam would be in the demo. Whether they hurt is
    a k-fold question: with and without them.
@@ -761,6 +920,11 @@ In rough order of when they block something:
    local page of the target signs, two ASL Citizen clips each, never to be
    shared (license). The demo will then follow the
    new card on its own.
+   Next: the TCN recipe of 3c. `train_final.py` must first learn its options
+   (TCN, phonology heads, pretraining batch and Adam scaling, fast
+   preparation) and cite `models/aslc_kfold_tcn_xla_5fold.json`. The demo
+   loads the saved `.keras` files, which carry their architecture (save and
+   reload checked for the TCN in item 3), but has not run a TCN yet.
 8. **The signers' brief (`RECORDING.md`) is obsolete**: it describes the 50
    WLASL words and WLASL variants. It needs the new vocabulary and new reference
    clips — and the license forbids distributing ASL Citizen videos, so sending
