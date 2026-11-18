@@ -9,7 +9,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.signifyUDES2026.frontend</string>
+	<string>com.signifyUDES2026.gragus</string>
 	<key>PROJECT_ID</key>
 	<string>signify-d70ad</string>
 	<key>STORAGE_BUCKET</key>
@@ -25,6 +25,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:154860143482:ios:bdf7fffdd94e7176dd0cc3</string>
+	<string>1:154860143482:ios:d258a6acd13e390cdd0cc3</string>
 </dict>
 </plist>

@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:154860143482:android:ea7a8a0b884fc014dd0cc3",
+        "mobilesdk_app_id": "1:154860143482:android:2cc2438a0232e2b6dd0cc3",
         "android_client_info": {
-          "package_name": "com.signifyUDES2026.frontend"
+          "package_name": "com.signifyUDES2026.gragus"
         }
       },
       "oauth_client": [],

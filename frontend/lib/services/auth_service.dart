@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'user_profile_service.dart';
+
 class AuthException implements Exception {
   final String message;
   AuthException(this.message);
@@ -10,6 +12,7 @@ class AuthException implements Exception {
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final UserProfileService _profiles = UserProfileService();
 
   Stream<User?> get authStateChanges => _auth.authStateChanges();
   User? get currentUser => _auth.currentUser;
@@ -27,9 +30,16 @@ class AuthService {
       if (displayName != null && displayName.trim().isNotEmpty) {
         await cred.user?.updateDisplayName(displayName.trim());
       }
+      if (cred.user != null) {
+        await _profiles.ensureProfile(cred.user!);
+      }
       return cred;
     } on FirebaseAuthException catch (e) {
       throw AuthException(_messageFr(e.code));
+    } on FirebaseException catch (e) {
+      throw AuthException(
+        'Could not create your profile: ${e.message ?? e.code}',
+      );
     }
   }
 
@@ -38,12 +48,20 @@ class AuthService {
     required String password,
   }) async {
     try {
-      return await _auth.signInWithEmailAndPassword(
+      final cred = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+      if (cred.user != null) {
+        await _profiles.ensureProfile(cred.user!);
+      }
+      return cred;
     } on FirebaseAuthException catch (e) {
       throw AuthException(_messageFr(e.code));
+    } on FirebaseException catch (e) {
+      throw AuthException(
+        'Could not create your profile: ${e.message ?? e.code}',
+      );
     }
   }
 

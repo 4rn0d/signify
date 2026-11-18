@@ -1,4 +1,4 @@
-package com.signifyUDES2026.frontend
+package com.signifyUDES2026.gragus
 
 import io.flutter.embedding.android.FlutterActivity
 
