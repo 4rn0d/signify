@@ -204,8 +204,7 @@ class _TrainingPageState extends State<TrainingPage>
       final prediction = await _letterRecognizer.recognize(image);
       if (!mounted || !_cameraEnabled || _trainingComplete) return;
 
-      final matched =
-          prediction.letter == _currentLetter &&
+      final matched = prediction.letter == _currentLetter &&
           prediction.confidence >= _minConfidence;
       setState(() {
         _recognitionStatus = prediction.describe();
@@ -286,9 +285,8 @@ class _TrainingPageState extends State<TrainingPage>
                     children: [
                       _TrainingHeader(
                         colors: colors,
-                        completedLetters: _trainingComplete
-                            ? 26
-                            : _currentLetterIndex + 1,
+                        completedLetters:
+                            _trainingComplete ? 26 : _currentLetterIndex + 1,
                         onBack: () => Navigator.of(context).pop(),
                       ),
                       SizedBox(height: compact ? 8 : 20),
@@ -296,14 +294,18 @@ class _TrainingPageState extends State<TrainingPage>
                         Text(
                           'Learn the alphabet',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineSmall
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineSmall
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           'Watch Gragas, then try the sign yourself.',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
                               ?.copyWith(color: colors.onSurfaceVariant),
                         ),
                         const SizedBox(height: 12),
@@ -363,9 +365,8 @@ class _TrainingPageState extends State<TrainingPage>
                         cameraEnabled: _cameraEnabled,
                         cameraTooltip: cameraTooltip,
                         cameraError: _cameraError,
-                        recognitionStatus: _cameraEnabled
-                            ? _recognitionStatus
-                            : null,
+                        recognitionStatus:
+                            _cameraEnabled ? _recognitionStatus : null,
                         onCameraToggle: _toggleCamera,
                         onSignChecked: _onSignChecked,
                       ),
@@ -411,10 +412,10 @@ class _TrainingHeader extends StatelessWidget {
               Text(
                 'ALPHABET PRACTICE',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: colors.onSurfaceVariant,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
               ),
               const SizedBox(height: 8),
               ClipRRect(
@@ -427,7 +428,9 @@ class _TrainingHeader extends StatelessWidget {
         const SizedBox(width: 12),
         Text(
           '$completedLetters / 26',
-          style: Theme.of(context).textTheme.labelLarge
+          style: Theme.of(context)
+              .textTheme
+              .labelLarge
               ?.copyWith(fontWeight: FontWeight.bold),
         ),
       ],
@@ -487,13 +490,14 @@ class _SpeechBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final surfaceColor = Theme.of(context).colorScheme.surface;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: surfaceColor,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: borderColor),
             boxShadow: const [
@@ -509,14 +513,18 @@ class _SpeechBubble extends StatelessWidget {
             children: [
               Text(
                 letter,
-                style: Theme.of(context).textTheme.headlineMedium
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineMedium
                     ?.copyWith(color: letterColor, fontWeight: FontWeight.w900),
               ),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
                   'Can you make this sign?',
-                  style: Theme.of(context).textTheme.bodyLarge
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyLarge
                       ?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
@@ -540,7 +548,7 @@ class _SpeechBubble extends StatelessWidget {
             height: 16,
             margin: const EdgeInsets.only(top: 2),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: surfaceColor,
               border: Border(
                 right: BorderSide(color: borderColor),
                 bottom: BorderSide(color: borderColor),
@@ -584,10 +592,11 @@ class _PracticePrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final surfaceColor = Theme.of(context).colorScheme.surface;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: borderColor),
       ),
@@ -613,16 +622,18 @@ class _PracticePrompt extends StatelessWidget {
                     Text(
                       'Your turn',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: textColor,
-                        fontWeight: FontWeight.bold,
-                      ),
+                            color: textColor,
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       trainingComplete
                           ? 'You completed the alphabet!'
                           : 'Practice the ASL sign for $letter.',
-                      style: Theme.of(context).textTheme.bodyMedium
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
                           ?.copyWith(color: secondaryTextColor),
                     ),
                   ],
@@ -659,9 +670,8 @@ class _PracticePrompt extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: trainingComplete
-                      ? null
-                      : () => onSignChecked(true),
+                  onPressed:
+                      trainingComplete ? null : () => onSignChecked(true),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(58),
                   ),
@@ -682,7 +692,9 @@ class _PracticePrompt extends StatelessWidget {
             Text(
               recognitionStatus!,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
                   ?.copyWith(color: secondaryTextColor),
             ),
           ],
@@ -691,7 +703,9 @@ class _PracticePrompt extends StatelessWidget {
             Text(
               cameraError!,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
                   ?.copyWith(color: Theme.of(context).colorScheme.error),
             ),
           ],
@@ -720,35 +734,35 @@ class _CameraPreviewPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final preview = switch (true) {
       _ when error != null => _CameraStatus(
-        icon: Icons.videocam_off_outlined,
-        message: error!,
-      ),
-      _ when isLoading => const _CameraStatus(
-        icon: Icons.videocam_outlined,
-        message: 'Opening camera…',
-        showProgress: true,
-      ),
-      _ when isMacOS => CameraMacOSView(
-        cameraMode: CameraMacOSMode.photo,
-        enableAudio: false,
-        fit: BoxFit.cover,
-        onCameraInizialized: onMacOSCameraInitialized,
-        onCameraLoading: (error) => _CameraStatus(
           icon: Icons.videocam_off_outlined,
-          message: error == null
-              ? 'Requesting camera access…'
-              : 'Could not open the camera: $error',
-          showProgress: error == null,
+          message: error!,
         ),
-      ),
+      _ when isLoading => const _CameraStatus(
+          icon: Icons.videocam_outlined,
+          message: 'Opening camera…',
+          showProgress: true,
+        ),
+      _ when isMacOS => CameraMacOSView(
+          cameraMode: CameraMacOSMode.photo,
+          enableAudio: false,
+          fit: BoxFit.cover,
+          onCameraInizialized: onMacOSCameraInitialized,
+          onCameraLoading: (error) => _CameraStatus(
+            icon: Icons.videocam_off_outlined,
+            message: error == null
+                ? 'Requesting camera access…'
+                : 'Could not open the camera: $error',
+            showProgress: error == null,
+          ),
+        ),
       _ when controller?.value.isInitialized == true => CameraPreview(
-        controller!,
-      ),
+          controller!,
+        ),
       _ => const _CameraStatus(
-        icon: Icons.videocam_outlined,
-        message: 'Opening camera…',
-        showProgress: true,
-      ),
+          icon: Icons.videocam_outlined,
+          message: 'Opening camera…',
+          showProgress: true,
+        ),
     };
 
     return Center(

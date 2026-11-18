@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/GoogleAppMeasurement" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/GoogleDataTransport" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/GoogleUtilities" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/abseil-cpp-binary" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/app-check" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/firebase-ios-sdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/google-ads-on-device-conversion-ios-sdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/grpc-binary" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/gtm-session-fetcher" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/interop-ios-for-google-sdks" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/leveldb" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/nanopb" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/frontend/build/macos/SourcePackages/checkouts/promises" vcs="Git" />
+  </component>
+</project>

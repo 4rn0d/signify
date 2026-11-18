@@ -40,7 +40,7 @@ class _SignUpPageState extends State<SignUpPage> {
         password: _passwordCtrl.text,
         displayName: _nameCtrl.text,
       );
-      // Retire la page d'inscription : AuthGate affiche déjà HomePage
+      // Remove the signup page; AuthGate now shows the authenticated destination.
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } on AuthException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -119,9 +119,9 @@ class _SignUpPageState extends State<SignUpPage> {
                       onPressed: _loading ? null : _submit,
                       child: _loading
                           ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text("S'inscrire"),
                     ),
                   ],
