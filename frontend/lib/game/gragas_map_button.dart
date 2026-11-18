@@ -30,6 +30,7 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
 
   @override
   void onTapUp(TapUpEvent event) {
+    _hovered = false;
     current = GragasAnimation.throwBarrel;
     animationTicker?.reset();
   }

@@ -58,7 +58,10 @@ class MapActionHotspot extends PositionComponent
   bool _hovered = false;
 
   @override
-  void onTapUp(TapUpEvent event) => onPressed();
+  void onTapUp(TapUpEvent event) {
+    _hovered = false;
+    onPressed();
+  }
 
   @override
   void onHoverEnter() => _hovered = true;

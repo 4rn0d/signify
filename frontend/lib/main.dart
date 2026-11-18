@@ -3,7 +3,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
 import 'package:frontend/pages/map_destination_placeholder.dart';
+import 'package:frontend/pages/profile_page.dart';
 import 'package:frontend/pages/training_page.dart';
+import 'package:frontend/services/auth_service.dart';
+import 'package:frontend/services/user_profile_service.dart';
 import 'package:frontend/theme/app_theme.dart';
 
 import 'auth_gate.dart';
@@ -47,11 +50,25 @@ Future<void> main() async {
           );
         },
         onSettingsPressed: () {
+          final user = AuthService().currentUser;
+          if (user == null) {
+            final context = navigatorKey.currentContext;
+            if (context != null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No signed-in user was found.'),
+                ),
+              );
+            }
+            return;
+          }
+
+          final profile = UserProfileService().loadOrCreateProfile(user);
           navigatorKey.currentState?.push(
             MaterialPageRoute<void>(
-              builder: (_) => const MapDestinationPlaceholder(
-                title: 'Settings',
-                icon: Icons.settings_outlined,
+              builder: (_) => ProfilePage(
+                email: user.email,
+                profile: profile,
               ),
             ),
           );
