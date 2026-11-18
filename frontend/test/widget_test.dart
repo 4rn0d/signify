@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/auth_gate.dart';
 import 'package:frontend/main.dart';
+import 'package:frontend/pages/ten_question_practice_page.dart';
 import 'package:frontend/widgets/gragas_avatar.dart';
 
 void main() {
@@ -55,6 +56,7 @@ void main() {
     await tester.pumpWidget(
       SignifyApp(authStatus: Stream<bool>.value(true)),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('Signify'), findsOneWidget);
     expect(
@@ -62,13 +64,20 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Start learning'), findsOneWidget);
-    expect(find.text('ALPHABET PRACTICE'), findsNothing);
+    expect(find.text('ENDLESS PRACTICE'), findsNothing);
 
     await tester.tap(find.text('Start learning'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose your practice'), findsOneWidget);
+    expect(find.text('Endless Practice'), findsOneWidget);
+    expect(find.text('10 Questions'), findsOneWidget);
+
+    await tester.tap(find.text('Endless Practice'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('ALPHABET PRACTICE'), findsOneWidget);
+    expect(find.text('ENDLESS PRACTICE'), findsOneWidget);
     expect(find.text('Learn the alphabet'), findsOneWidget);
     expect(find.text('A'), findsOneWidget);
     expect(find.text('Practice the ASL sign for A.'), findsOneWidget);
@@ -104,8 +113,9 @@ void main() {
 
     await tester.tap(find.text('Done'));
     await tester.pump();
-    expect(find.text('You completed the alphabet!'), findsOneWidget);
-    expect(find.text('Completed'), findsOneWidget);
+    expect(find.text('Practice the ASL sign for A.'), findsOneWidget);
+    expect(find.text('1 / 26'), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
 
     final avatarState = tester.state(find.byType(GragasAvatar));
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -133,7 +143,34 @@ void main() {
     await tester.tap(find.byTooltip('Back to menu'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Start learning'), findsOneWidget);
-    expect(find.text('ALPHABET PRACTICE'), findsNothing);
+    expect(find.text('Choose your practice'), findsOneWidget);
+    expect(find.text('10 Questions'), findsOneWidget);
+    expect(find.text('ENDLESS PRACTICE'), findsNothing);
+  });
+
+  testWidgets('10-question practice advances through empty exercises', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: TenQuestionPracticePage()),
+    );
+
+    expect(find.text('QUESTION 1 OF 10'), findsOneWidget);
+    expect(find.text('Sign Recognition'), findsOneWidget);
+
+    await tester.tap(find.text('Next'));
+    await tester.pump();
+
+    expect(find.text('QUESTION 2 OF 10'), findsOneWidget);
+    expect(find.text('Letter Signing'), findsOneWidget);
+
+    for (var question = 2; question < 10; question++) {
+      await tester.tap(find.text('Next'));
+      await tester.pump();
+    }
+
+    expect(find.text('QUESTION 10 OF 10'), findsOneWidget);
+    expect(find.text('Multi-Letter Matching'), findsOneWidget);
+    expect(find.text('Finish'), findsOneWidget);
   });
 }
