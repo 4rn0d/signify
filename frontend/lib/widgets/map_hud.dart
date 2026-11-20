@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:frontend/services/auth_service.dart';
 import 'package:frontend/services/user_profile_service.dart';
 
+import '../pages/profile_page.dart';
+
 class MapHud extends StatefulWidget {
   const MapHud({super.key});
 
@@ -20,6 +22,21 @@ class _MapHudState extends State<MapHud> {
         user == null ? null : UserProfileService().loadOrCreateProfile(user);
   }
 
+  void _openProfile() {
+    final user = AuthService().currentUser;
+    final profile = _profile;
+    if (user == null || profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No signed-in user was found.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfilePage(email: user.email, profile: profile),
+      ),
+    );
+  }
   String _xpValue(AsyncSnapshot<UserProfile> snapshot) {
     if (_profile == null) return '—';
     if (snapshot.hasError) return '!';
@@ -126,6 +143,23 @@ class _MapHudState extends State<MapHud> {
                           ],
                         ),
                       ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Material(
+                    color: colors.surface,
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(color: colors.primary, width: 5),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _openProfile,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        child: Icon(Icons.person_outline, color: colors.primary),
+                      ),
                     ),
                   ),
                 ])),
