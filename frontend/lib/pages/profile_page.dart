@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/auth_service.dart';
 import '../services/profile_stats_service.dart';
 import '../services/user_profile_service.dart';
 
@@ -26,28 +27,34 @@ class _ProfileData {
 }
 
 class _AvatarOption {
-  const _AvatarOption(this.icon, this.color);
+  const _AvatarOption(this.id, this.icon, this.color);
+
+  /// Stable id stored in Firestore (users/{uid}.iconId). Never rename or
+  /// reuse an id, or users who picked it will get a different icon.
+  final String id;
   final IconData icon;
   final Color color;
 }
 
+// The first option is the default when the user has no saved iconId.
 const _avatarOptions = <_AvatarOption>[
-  _AvatarOption(Icons.person, Colors.indigo),
-  _AvatarOption(Icons.face, Colors.teal),
-  _AvatarOption(Icons.pets, Colors.orange),
-  _AvatarOption(Icons.rocket_launch, Colors.deepPurple),
-  _AvatarOption(Icons.star, Colors.amber),
-  _AvatarOption(Icons.emoji_nature, Colors.green),
-  _AvatarOption(Icons.sports_esports, Colors.red),
-  _AvatarOption(Icons.music_note, Colors.pink),
-  _AvatarOption(Icons.waving_hand, Colors.blue),
-  _AvatarOption(Icons.local_fire_department, Colors.deepOrange),
-  _AvatarOption(Icons.diamond, Colors.cyan),
-  _AvatarOption(Icons.favorite, Colors.redAccent),
+  _AvatarOption('person', Icons.person, Colors.indigo),
+  _AvatarOption('face', Icons.face, Colors.teal),
+  _AvatarOption('pets', Icons.pets, Colors.orange),
+  _AvatarOption('rocket', Icons.rocket_launch, Colors.deepPurple),
+  _AvatarOption('star', Icons.star, Colors.amber),
+  _AvatarOption('nature', Icons.emoji_nature, Colors.green),
+  _AvatarOption('gamepad', Icons.sports_esports, Colors.red),
+  _AvatarOption('music', Icons.music_note, Colors.pink),
+  _AvatarOption('wave', Icons.waving_hand, Colors.blue),
+  _AvatarOption('fire', Icons.local_fire_department, Colors.deepOrange),
+  _AvatarOption('diamond', Icons.diamond, Colors.cyan),
+  _AvatarOption('heart', Icons.favorite, Colors.redAccent),
 ];
 
 class _ProfilePageState extends State<ProfilePage> {
   final _service = ProfileStatsService();
+  final _profiles = UserProfileService();
   late final Future<_ProfileData> _data;
   int _avatarIndex = 0;
 
@@ -57,8 +64,29 @@ class _ProfilePageState extends State<ProfilePage> {
     _data = _load();
   }
 
+  /// Index of the saved avatar, or 0 (the first icon) when the profile has
+  /// no iconId yet or the id is unknown.
+  int _avatarIndexFor(String? iconId) {
+    final index = _avatarOptions.indexWhere((option) => option.id == iconId);
+    return index == -1 ? 0 : index;
+  }
+
+  /// Fetches the saved icon id from Firestore each time the page opens.
+  /// Falls back to the id already on [profile] if the fetch fails, and the
+  /// caller then falls back to the first icon when that is null too.
+  Future<String?> _fetchIconId(UserProfile profile) async {
+    final user = AuthService().currentUser;
+    if (user == null) return profile.iconId;
+    try {
+      return await _profiles.fetchIconId(user);
+    } catch (_) {
+      return profile.iconId;
+    }
+  }
+
   Future<_ProfileData> _load() async {
     final profile = await widget.profile;
+    _avatarIndex = _avatarIndexFor(await _fetchIconId(profile));
     final stats = await _service.loadStats();
     final leaderboard = await _service.loadLeaderboard(
       currentUserName: profile.displayName,
@@ -75,8 +103,20 @@ class _ProfilePageState extends State<ProfilePage> {
       context: context,
       builder: (context) => _AvatarPickerDialog(selected: _avatarIndex),
     );
-    if (picked != null && mounted) {
-      setState(() => _avatarIndex = picked);
+    if (picked == null || picked == _avatarIndex || !mounted) return;
+
+    final previous = _avatarIndex;
+    setState(() => _avatarIndex = picked);
+    try {
+      final user = AuthService().currentUser;
+      if (user == null) throw StateError('No signed-in user.');
+      await _profiles.saveIconId(user, _avatarOptions[picked].id);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _avatarIndex = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save avatar: $error')),
+      );
     }
   }
 
