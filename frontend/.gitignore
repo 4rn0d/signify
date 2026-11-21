@@ -52,3 +52,7 @@ app.*.map.json
 *.mobileprovision
 *.p12
 *.provisionprofile
+
+# Scripts
+/scripts
+DS_Store
