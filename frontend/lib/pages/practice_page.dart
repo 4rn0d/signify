@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
 const practiceCorrectColor = Color(0xFF2E7D32);
-const practiceCorrectBackgroundColor = Color(0xFFE8F5E9);
 const practiceIncorrectColor = Color(0xFFC62828);
-const practiceIncorrectBackgroundColor = Color(0xFFFFEBEE);
+
 
 class PracticePage extends StatelessWidget {
   const PracticePage({
@@ -152,14 +151,18 @@ class _PracticeConfirmation extends StatelessWidget {
               key: const ValueKey('confirmation-feedback-background'),
               duration: const Duration(milliseconds: 180),
               width: double.infinity,
-              margin: const EdgeInsets.symmetric(vertical: 3),
-              padding: const EdgeInsets.symmetric(vertical: 3),
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: answered
-                    ? isCorrect
-                        ? practiceCorrectBackgroundColor
-                        : practiceIncorrectBackgroundColor
-                    : Colors.transparent,
+                color: Colors.transparent,
+                border: Border.all(
+                  width: 2,
+                  color: answered
+                      ? isCorrect ?
+                        practiceCorrectColor
+                      : practiceIncorrectColor
+                      : Colors.transparent
+                ),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -190,7 +193,6 @@ class _PracticeConfirmation extends StatelessWidget {
                               backgroundColor: isCorrect
                                   ? practiceCorrectColor
                                   : practiceIncorrectColor,
-                              foregroundColor: Colors.white,
                             )
                           : null,
                       onPressed: answered

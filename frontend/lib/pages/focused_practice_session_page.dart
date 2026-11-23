@@ -431,9 +431,9 @@ class _AnswerChoices extends StatelessWidget {
                   style: OutlinedButton.styleFrom(
                     backgroundColor: answered
                         ? isCorrectOption
-                            ? practiceCorrectBackgroundColor
+                            ? Colors.transparent
                             : isSelected
-                                ? practiceIncorrectBackgroundColor
+                                ? Colors.transparent
                                 : null
                         : isSelected
                             ? colors.secondaryContainer
