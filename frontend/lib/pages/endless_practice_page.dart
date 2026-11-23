@@ -5,12 +5,23 @@ import 'package:camera_macos/camera_macos.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/auth_service.dart';
 import '../services/capture_cleanup.dart';
+import '../services/learning_service.dart';
 import '../services/letter_recognizer.dart';
+import '../widgets/camera_preview_panel.dart';
 import '../widgets/gragas_avatar.dart';
+import '../widgets/sign_prompt.dart';
 
 class EndlessPracticePage extends StatefulWidget {
-  const EndlessPracticePage({super.key});
+  const EndlessPracticePage({
+    this.letters,
+    this.practiceTitle = 'ENDLESS PRACTICE',
+    super.key,
+  }) : assert(letters == null || letters.length > 0);
+
+  final List<String>? letters;
+  final String practiceTitle;
 
   @override
   State<EndlessPracticePage> createState() => _EndlessPracticePageState();
@@ -25,6 +36,7 @@ class _EndlessPracticePageState extends State<EndlessPracticePage>
   bool _cameraEnabled = false;
   bool _cameraLoading = false;
   int _currentLetterIndex = 0;
+  late final List<String> _letters;
   GragasAnimation _gragasAnimation = GragasAnimation.idle;
   int _gragasAnimationTrigger = 0;
   String? _cameraError;
@@ -42,22 +54,51 @@ class _EndlessPracticePageState extends State<EndlessPracticePage>
   static const _minConfidence = 0.8;
   static const _recognitionInterval = Duration(milliseconds: 400);
 
-  String get _currentLetter => String.fromCharCode(65 + _currentLetterIndex);
+  String get _currentLetter => _letters[_currentLetterIndex];
 
   void _onSignChecked(bool signCompleted) {
-    if (!signCompleted) return;
+    unawaited(_recordLetterAttempt(signCompleted));
+    if (!signCompleted) {
+      setState(() {
+        _matchStreak = 0;
+        _recognitionStatus = 'Marked for more practice.';
+      });
+      return;
+    }
 
     setState(() {
       _matchStreak = 0;
       _gragasAnimation = GragasAnimation.drinkBarrel;
       _gragasAnimationTrigger++;
-      _currentLetterIndex = (_currentLetterIndex + 1) % 26;
+      _currentLetterIndex = (_currentLetterIndex + 1) % _letters.length;
     });
+  }
+
+  Future<void> _recordLetterAttempt(bool isCorrect) async {
+    final uid = AuthService().currentUser?.uid;
+    if (uid == null) return;
+    try {
+      await LearningService().recordLetterAttempt(
+        uid: uid,
+        exerciseType: 'recognition',
+        letterId: _currentLetter,
+        isCorrect: isCorrect,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save practice progress: $error')),
+      );
+    }
   }
 
   @override
   void initState() {
     super.initState();
+    _letters = List.unmodifiable(
+      widget.letters ??
+          List.generate(26, (index) => String.fromCharCode(65 + index)),
+    );
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -281,6 +322,8 @@ class _EndlessPracticePageState extends State<EndlessPracticePage>
                       _TrainingHeader(
                         colors: colors,
                         completedLetters: _currentLetterIndex + 1,
+                        totalLetters: _letters.length,
+                        title: widget.practiceTitle,
                         onBack: () => Navigator.of(context).pop(),
                       ),
                       SizedBox(height: compact ? 8 : 20),
@@ -316,7 +359,7 @@ class _EndlessPracticePageState extends State<EndlessPracticePage>
                               letterColor: colors.primary,
                               borderColor: colors.outlineVariant,
                             );
-                            final cameraPanel = _CameraPreviewPanel(
+                            final cameraPanel = CameraPreviewPanel(
                               isMacOS:
                                   defaultTargetPlatform == TargetPlatform.macOS,
                               controller: _cameraController,
@@ -379,16 +422,20 @@ class _TrainingHeader extends StatelessWidget {
   const _TrainingHeader({
     required this.colors,
     required this.completedLetters,
+    required this.totalLetters,
+    required this.title,
     required this.onBack,
   });
 
   final ColorScheme colors;
   final int completedLetters;
+  final int totalLetters;
+  final String title;
   final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
-    final progress = completedLetters / 26;
+    final progress = completedLetters / totalLetters;
 
     return Row(
       children: [
@@ -403,7 +450,7 @@ class _TrainingHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'ENDLESS PRACTICE',
+                title,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: colors.onSurfaceVariant,
                       fontWeight: FontWeight.bold,
@@ -420,7 +467,7 @@ class _TrainingHeader extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         Text(
-          '$completedLetters / 26',
+          '$completedLetters / $totalLetters',
           style: Theme.of(context)
               .textTheme
               .labelLarge
@@ -452,7 +499,7 @@ class _CharacterPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _SpeechBubble(
+        SignPrompt(
           letter: letter,
           letterColor: letterColor,
           borderColor: borderColor,
@@ -463,90 +510,6 @@ class _CharacterPanel extends StatelessWidget {
             key: gragasAvatarKey,
             animation: gragasAnimation,
             animationTrigger: gragasAnimationTrigger,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SpeechBubble extends StatelessWidget {
-  const _SpeechBubble({
-    required this.letter,
-    required this.letterColor,
-    required this.borderColor,
-  });
-
-  final String letter;
-  final Color letterColor;
-  final Color borderColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final surfaceColor = Theme.of(context).colorScheme.surface;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-          decoration: BoxDecoration(
-            color: surfaceColor,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: borderColor),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x12000000),
-                blurRadius: 14,
-                offset: Offset(0, 5),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                letter,
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(color: letterColor, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Text(
-                  'Can you make this sign?',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyLarge
-                      ?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.asset(
-                  'assets/asl-signs/$letter.png',
-                  height: 64,
-                  width: 52,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Transform.rotate(
-          angle: 0.785398,
-          child: Container(
-            width: 16,
-            height: 16,
-            margin: const EdgeInsets.only(top: 2),
-            decoration: BoxDecoration(
-              color: surfaceColor,
-              border: Border(
-                right: BorderSide(color: borderColor),
-                bottom: BorderSide(color: borderColor),
-              ),
-            ),
           ),
         ),
       ],
@@ -673,6 +636,19 @@ class _PracticePrompt extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => onSignChecked(false),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 30),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('I need more practice'),
+            ),
+          ),
           if (recognitionStatus != null && cameraError == null) ...[
             const SizedBox(height: 8),
             Text(
@@ -695,108 +671,6 @@ class _PracticePrompt extends StatelessWidget {
                   ?.copyWith(color: Theme.of(context).colorScheme.error),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CameraPreviewPanel extends StatelessWidget {
-  const _CameraPreviewPanel({
-    required this.isMacOS,
-    required this.controller,
-    required this.isLoading,
-    required this.error,
-    required this.onMacOSCameraInitialized,
-  });
-
-  final bool isMacOS;
-  final CameraController? controller;
-  final bool isLoading;
-  final String? error;
-  final ValueChanged<CameraMacOSController> onMacOSCameraInitialized;
-
-  @override
-  Widget build(BuildContext context) {
-    final preview = switch (true) {
-      _ when error != null => _CameraStatus(
-          icon: Icons.videocam_off_outlined,
-          message: error!,
-        ),
-      _ when isLoading => const _CameraStatus(
-          icon: Icons.videocam_outlined,
-          message: 'Opening camera…',
-          showProgress: true,
-        ),
-      _ when isMacOS => CameraMacOSView(
-          cameraMode: CameraMacOSMode.photo,
-          enableAudio: false,
-          fit: BoxFit.cover,
-          onCameraInizialized: onMacOSCameraInitialized,
-          onCameraLoading: (error) => _CameraStatus(
-            icon: Icons.videocam_off_outlined,
-            message: error == null
-                ? 'Requesting camera access…'
-                : 'Could not open the camera: $error',
-            showProgress: error == null,
-          ),
-        ),
-      _ when controller?.value.isInitialized == true => CameraPreview(
-          controller!,
-        ),
-      _ => const _CameraStatus(
-          icon: Icons.videocam_outlined,
-          message: 'Opening camera…',
-          showProgress: true,
-        ),
-    };
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 480),
-        child: AspectRatio(
-          aspectRatio: 4 / 3,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: ColoredBox(
-              color: Colors.black,
-              child: Center(child: preview),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CameraStatus extends StatelessWidget {
-  const _CameraStatus({
-    required this.icon,
-    required this.message,
-    this.showProgress = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final bool showProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (showProgress)
-            const CircularProgressIndicator()
-          else
-            Icon(icon, color: Colors.white, size: 48),
-          const SizedBox(height: 16),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white),
-          ),
         ],
       ),
     );

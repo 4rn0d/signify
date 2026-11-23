@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'user_profile_service.dart';
 
@@ -11,11 +12,18 @@ class AuthException implements Exception {
 }
 
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final UserProfileService _profiles = UserProfileService();
+  AuthService({FirebaseAuth? auth, UserProfileService? profiles})
+      : _authInstance = auth,
+        _profileService = profiles;
+
+  FirebaseAuth? _authInstance;
+  UserProfileService? _profileService;
+
+  FirebaseAuth get _auth => _authInstance ??= FirebaseAuth.instance;
+  UserProfileService get _profiles => _profileService ??= UserProfileService();
 
   Stream<User?> get authStateChanges => _auth.authStateChanges();
-  User? get currentUser => _auth.currentUser;
+  User? get currentUser => Firebase.apps.isEmpty ? null : _auth.currentUser;
 
   Future<UserCredential> signUp({
     required String email,

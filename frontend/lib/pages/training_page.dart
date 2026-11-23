@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'endless_practice_page.dart';
-import 'ten_question_practice_page.dart';
+import 'learning_block_page.dart';
 
 class TrainingPage extends StatelessWidget {
   const TrainingPage({super.key});
@@ -42,13 +42,15 @@ class TrainingPage extends StatelessWidget {
                       ),
                       const Divider(height: 1),
                       ListTile(
-                        leading: const Icon(Icons.quiz_outlined),
-                        title: const Text('10 Questions'),
-                        subtitle: const Text('A mix of exercise types.'),
+                        leading: const Icon(Icons.tune_rounded),
+                        title: const Text('Focused Practice'),
+                        subtitle: const Text(
+                          'Learn and review letters that need practice.',
+                        ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
-                            builder: (_) => const TenQuestionPracticePage(),
+                            builder: (_) => const LearningBlockPage(),
                           ),
                         ),
                       ),

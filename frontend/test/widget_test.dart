@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/auth_gate.dart';
 import 'package:frontend/main.dart';
-import 'package:frontend/pages/ten_question_practice_page.dart';
 import 'package:frontend/widgets/gragas_avatar.dart';
 
 void main() {
@@ -71,7 +70,8 @@ void main() {
 
     expect(find.text('Choose your practice'), findsOneWidget);
     expect(find.text('Endless Practice'), findsOneWidget);
-    expect(find.text('10 Questions'), findsOneWidget);
+    expect(find.text('Focused Practice'), findsOneWidget);
+    expect(find.text('10 Questions'), findsNothing);
 
     await tester.tap(find.text('Endless Practice'));
     await tester.pump();
@@ -144,33 +144,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Choose your practice'), findsOneWidget);
-    expect(find.text('10 Questions'), findsOneWidget);
+    expect(find.text('10 Questions'), findsNothing);
     expect(find.text('ENDLESS PRACTICE'), findsNothing);
-  });
-
-  testWidgets('10-question practice advances through empty exercises', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: TenQuestionPracticePage()),
-    );
-
-    expect(find.text('QUESTION 1 OF 10'), findsOneWidget);
-    expect(find.text('Sign Recognition'), findsOneWidget);
-
-    await tester.tap(find.text('Next'));
-    await tester.pump();
-
-    expect(find.text('QUESTION 2 OF 10'), findsOneWidget);
-    expect(find.text('Letter Signing'), findsOneWidget);
-
-    for (var question = 2; question < 10; question++) {
-      await tester.tap(find.text('Next'));
-      await tester.pump();
-    }
-
-    expect(find.text('QUESTION 10 OF 10'), findsOneWidget);
-    expect(find.text('Multi-Letter Matching'), findsOneWidget);
-    expect(find.text('Finish'), findsOneWidget);
   });
 }
