@@ -7,11 +7,19 @@ import 'package:frontend/game/gragas_map_button.dart';
 import 'package:frontend/game/map_action_hotspot.dart';
 
 String sanitizeMenuTmx(String tmx) {
-  return tmx.replaceAllMapped(RegExp(r'<tileset\b[^>]*>'), (match) {
-    final tileset = match[0]!;
-    if (!RegExp(r'\bcolumns="0"').hasMatch(tileset)) return tileset;
-    return tileset.replaceAll(RegExp(r'\s+tilecount="\d+"'), '');
-  });
+  // Flame.Images already prefixes paths with assets/images/.
+  final normalizedImagePaths = tmx.replaceAll(
+    'source="../images/',
+    'source="',
+  );
+  return normalizedImagePaths.replaceAllMapped(
+    RegExp(r'<tileset\b[^>]*>'),
+    (match) {
+      final tileset = match[0]!;
+      if (!RegExp(r'\bcolumns="0"').hasMatch(tileset)) return tileset;
+      return tileset.replaceAll(RegExp(r'\s+tilecount="\d+"'), '');
+    },
+  );
 }
 
 class Menu extends World {
