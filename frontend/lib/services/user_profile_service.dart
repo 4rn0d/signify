@@ -2,25 +2,38 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class UserProfile {
-  const UserProfile({required this.displayName, required this.exp});
+  const UserProfile({
+    required this.displayName,
+    required this.exp,
+    this.iconId,
+  });
 
   final String displayName;
   final int exp;
 
+  /// Id of the avatar icon the user picked. Null until they pick one, in
+  /// which case the UI falls back to the first icon.
+  final String? iconId;
+
   factory UserProfile.fromMap(Map<String, dynamic> data) {
     final displayName = data['displayName'];
     final exp = data['exp'];
+    final iconId = data['iconId'];
     if (displayName is! String || exp is! num) {
       throw const FormatException('User profile has invalid fields.');
     }
 
-    return UserProfile(displayName: displayName, exp: exp.toInt());
+    return UserProfile(
+      displayName: displayName,
+      exp: exp.toInt(),
+      iconId: iconId is String ? iconId : null,
+    );
   }
 }
 
 class UserProfileService {
   UserProfileService({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _firestore;
 
@@ -54,6 +67,18 @@ class UserProfileService {
     }
 
     return UserProfile.fromMap(data);
+  }
+
+  Future<void> saveIconId(User user, String iconId) {
+    return _users.doc(user.uid).set({
+      'iconId': iconId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+  Future<String?> fetchIconId(User user) async {
+    final snapshot = await _users.doc(user.uid).get();
+    final iconId = snapshot.data()?['iconId'];
+    return iconId is String ? iconId : null;
   }
 
   String _defaultDisplayName(String? email) {
