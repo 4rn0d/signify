@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
 import 'package:frontend/pages/map_destination_placeholder.dart';
 import 'package:frontend/pages/profile_page.dart';
-import 'package:frontend/pages/training_page.dart';
+import 'package:frontend/pages/practice/focused_practice_loader_page.dart';
 import 'package:frontend/services/auth_service.dart';
 import 'package:frontend/services/user_profile_service.dart';
 import 'package:frontend/theme/app_theme.dart';
@@ -25,7 +25,7 @@ Future<void> main() async {
         onGragasPressed: () {
           navigatorKey.currentState?.push(
             MaterialPageRoute<void>(
-              builder: (_) => const TrainingPage(),
+              builder: (_) => const FocusedPracticeLoaderPage(),
             ),
           );
         },

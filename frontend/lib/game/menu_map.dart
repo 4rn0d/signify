@@ -61,7 +61,7 @@ class Menu extends World {
     add(
       GragasMapButton(
         position: Vector2(gragasObject.x, gragasObject.y),
-        label: 'Training',
+        label: 'Practice',
         onPressed: onGragasPressed,
       ),
     );

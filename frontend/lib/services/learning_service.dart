@@ -137,6 +137,35 @@ class LearningService {
     );
   }
 
+  Future<void> recordLetterMatchingAttempt({
+    required String uid,
+    required List<LetterAttemptResult> letterResults,
+  }) {
+    if (letterResults.isEmpty) {
+      throw ArgumentError.value(
+        letterResults,
+        'letterResults',
+        'At least one letter result is required.',
+      );
+    }
+    if (letterResults.any((result) => result.letterId.trim().isEmpty)) {
+      throw ArgumentError.value(
+        letterResults,
+        'letterResults',
+        'Every result must include a letter document ID.',
+      );
+    }
+    return _recordAttempt(
+      uid: uid,
+      attempt: {
+        'exerciseType': 'focused_practice_multi_letter_matching',
+        'letterIds': letterResults.map((result) => result.letterId).toList(),
+        'letterResults': letterResults.map((result) => result.toMap()).toList(),
+      },
+      results: letterResults,
+    );
+  }
+
   Future<void> _recordAttempt({
     required String uid,
     required Map<String, Object> attempt,

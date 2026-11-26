@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 
-const practiceCorrectColor = Color(0xFF2E7D32);
-const practiceIncorrectColor = Color(0xFFC62828);
+import '../../exercises/exercise_widgets.dart';
 
-
-class PracticePage extends StatelessWidget {
-  const PracticePage({
+class PracticeQuestionPage extends StatelessWidget {
+  const PracticeQuestionPage({
     required this.title,
     required this.questionNumber,
     required this.questionCount,
@@ -16,7 +14,8 @@ class PracticePage extends StatelessWidget {
     required this.feedback,
     required this.saving,
     required this.canConfirm,
-    required this.onConfirm,
+    this.onConfirm,
+    this.confirmLabel = 'Check answer',
     required this.continueLabel,
     required this.onContinue,
     super.key,
@@ -32,7 +31,8 @@ class PracticePage extends StatelessWidget {
   final String feedback;
   final bool saving;
   final bool canConfirm;
-  final VoidCallback onConfirm;
+  final VoidCallback? onConfirm;
+  final String confirmLabel;
   final String continueLabel;
   final VoidCallback onContinue;
 
@@ -64,6 +64,7 @@ class PracticePage extends StatelessWidget {
                     saving: saving,
                     canConfirm: canConfirm,
                     onConfirm: onConfirm,
+                    confirmLabel: confirmLabel,
                     continueLabel: continueLabel,
                     onContinue: onContinue,
                   ),
@@ -91,7 +92,7 @@ class _PracticeProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      key: const ValueKey('lesson-progress'),
+      key: const ValueKey('practice-progress'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
@@ -125,6 +126,7 @@ class _PracticeConfirmation extends StatelessWidget {
     required this.saving,
     required this.canConfirm,
     required this.onConfirm,
+    required this.confirmLabel,
     required this.continueLabel,
     required this.onContinue,
   });
@@ -134,7 +136,8 @@ class _PracticeConfirmation extends StatelessWidget {
   final String feedback;
   final bool saving;
   final bool canConfirm;
-  final VoidCallback onConfirm;
+  final VoidCallback? onConfirm;
+  final String confirmLabel;
   final String continueLabel;
   final VoidCallback onContinue;
 
@@ -156,13 +159,12 @@ class _PracticeConfirmation extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.transparent,
                 border: Border.all(
-                  width: 2,
-                  color: answered
-                      ? isCorrect ?
-                        practiceCorrectColor
-                      : practiceIncorrectColor
-                      : Colors.transparent
-                ),
+                    width: 2,
+                    color: answered
+                        ? isCorrect
+                            ? practiceCorrectColor
+                            : practiceIncorrectColor
+                        : Colors.transparent),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -212,7 +214,7 @@ class _PracticeConfirmation extends StatelessWidget {
                                   ),
                                 )
                               : Text(continueLabel)
-                          : const Text('Check answer'),
+                          : Text(confirmLabel),
                     ),
                   ),
                 ],

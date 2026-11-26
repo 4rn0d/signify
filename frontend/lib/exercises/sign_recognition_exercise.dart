@@ -4,51 +4,97 @@ import 'package:camera/camera.dart';
 import 'package:camera_macos/camera_macos.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:frontend/widgets/camera_preview_panel.dart';
-import 'package:frontend/widgets/sign_prompt.dart';
 
-import 'training_exercise.dart';
+import '../services/capture_cleanup.dart';
+import '../services/letter_recognizer.dart';
+import '../widgets/camera_preview_panel.dart';
+import 'exercise.dart';
 
-class SignRecognitionExercise extends TrainingExercise {
-  const SignRecognitionExercise({this.letter = 'A', super.key});
+class SignRecognitionExercise extends Exercise {
+  const SignRecognitionExercise({
+    required this.targetLetter,
+    required this.onResult,
+    this.resetToken = 0,
+    super.key,
+  });
 
-  final String letter;
+  final String targetLetter;
+  final ValueChanged<bool> onResult;
+  final Object resetToken;
 
   @override
   String get title => 'Sign Recognition';
 
   @override
-  Widget build(BuildContext context) =>
-      _SignRecognitionExerciseBody(letter: letter);
+  Widget build(BuildContext context) => _SignRecognitionCamera(
+        targetLetter: targetLetter,
+        onResult: onResult,
+        resetToken: resetToken,
+      );
 }
 
-class _SignRecognitionExerciseBody extends StatefulWidget {
-  const _SignRecognitionExerciseBody({required this.letter});
+class _SignRecognitionCamera extends StatefulWidget {
+  const _SignRecognitionCamera({
+    required this.targetLetter,
+    required this.onResult,
+    required this.resetToken,
+  });
 
-  final String letter;
+  final String targetLetter;
+  final ValueChanged<bool> onResult;
+  final Object resetToken;
 
   @override
-  State<_SignRecognitionExerciseBody> createState() =>
-      _SignRecognitionExerciseBodyState();
+  State<_SignRecognitionCamera> createState() => _SignRecognitionCameraState();
 }
 
-class _SignRecognitionExerciseBodyState
-    extends State<_SignRecognitionExerciseBody> with WidgetsBindingObserver {
+class _SignRecognitionCameraState extends State<_SignRecognitionCamera>
+    with WidgetsBindingObserver {
   CameraController? _cameraController;
   CameraMacOSController? _macOSCameraController;
+  final _letterRecognizer = LetterRecognizer();
+  Timer? _recognitionTimer;
   bool _cameraEnabled = false;
   bool _cameraLoading = false;
+  bool _recognizing = false;
+  bool _resultSubmitted = false;
+  int _matchStreak = 0;
   String? _cameraError;
+  String? _recognitionStatus;
+  String? _lastServerError;
+
+  static const _framesToValidate = 3;
+  static const _minConfidence = 0.8;
+  static const _recognitionInterval = Duration(milliseconds: 400);
+
+  String get _targetLetter => widget.targetLetter.trim().toUpperCase();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_toggleCamera());
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _SignRecognitionCamera oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.targetLetter != oldWidget.targetLetter ||
+        widget.resetToken != oldWidget.resetToken) {
+      _resultSubmitted = false;
+      _matchStreak = 0;
+      _recognitionStatus = null;
+      if (_cameraEnabled) _startRecognition();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _recognitionTimer?.cancel();
+    _letterRecognizer.close();
     _cameraController?.dispose();
     unawaited(_macOSCameraController?.destroy());
     super.dispose();
@@ -64,7 +110,6 @@ class _SignRecognitionExerciseBodyState
 
   Future<void> _toggleCamera() async {
     if (_cameraLoading) return;
-
     if (_cameraEnabled) {
       await _disableCamera();
       return;
@@ -83,6 +128,7 @@ class _SignRecognitionExerciseBodyState
           _cameraEnabled = true;
           _cameraLoading = false;
         });
+        _startRecognition();
       } else if (!kIsWeb &&
           defaultTargetPlatform != TargetPlatform.android &&
           defaultTargetPlatform != TargetPlatform.iOS &&
@@ -121,6 +167,7 @@ class _SignRecognitionExerciseBodyState
           _cameraEnabled = true;
           _cameraLoading = false;
         });
+        _startRecognition();
       }
     } on CameraException catch (error) {
       await controller?.dispose();
@@ -146,6 +193,8 @@ class _SignRecognitionExerciseBodyState
   Future<void> _disableCamera() async {
     final cameraController = _cameraController;
     final macOSCameraController = _macOSCameraController;
+    _recognitionTimer?.cancel();
+    _recognitionTimer = null;
     if (mounted) {
       setState(() {
         _cameraEnabled = false;
@@ -153,10 +202,81 @@ class _SignRecognitionExerciseBodyState
         _cameraController = null;
         _macOSCameraController = null;
         _cameraError = null;
+        _matchStreak = 0;
+        _recognitionStatus = null;
+        _lastServerError = null;
       });
     }
     await cameraController?.dispose();
     await macOSCameraController?.destroy();
+  }
+
+  void _startRecognition() {
+    _recognitionTimer?.cancel();
+    _recognitionTimer = Timer.periodic(
+      _recognitionInterval,
+      (_) => unawaited(_recognizeFrame()),
+    );
+  }
+
+  Future<void> _recognizeFrame() async {
+    if (_recognizing || !_cameraEnabled || _resultSubmitted) return;
+    _recognizing = true;
+    try {
+      final image = await _captureFrame();
+      if (image == null) return;
+      final prediction = await _letterRecognizer.recognize(image);
+      if (!mounted || !_cameraEnabled || _resultSubmitted) return;
+
+      _lastServerError = null;
+      final matched = prediction.letter == _targetLetter &&
+          prediction.confidence >= _minConfidence;
+      setState(() {
+        _recognitionStatus = prediction.describe();
+        _matchStreak = matched ? _matchStreak + 1 : 0;
+      });
+      if (_matchStreak >= _framesToValidate) _submitResult(true);
+    } on LetterServerException catch (error) {
+      if (!mounted) return;
+      setState(() => _recognitionStatus = null);
+      if (_lastServerError != error.message) {
+        _lastServerError = error.message;
+        final colors = Theme.of(context).colorScheme;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              backgroundColor: colors.error,
+              content:
+                  Text(error.message, style: TextStyle(color: colors.onError)),
+            ),
+          );
+      }
+    } on Exception {
+      // The camera was busy or closing; the next tick tries again.
+    } finally {
+      _recognizing = false;
+    }
+  }
+
+  Future<Uint8List?> _captureFrame() async {
+    final macOSCameraController = _macOSCameraController;
+    if (macOSCameraController != null) {
+      return (await macOSCameraController.takePicture())?.bytes;
+    }
+
+    final controller = _cameraController;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.isTakingPicture) {
+      return null;
+    }
+    final picture = await controller.takePicture();
+    try {
+      return await picture.readAsBytes();
+    } finally {
+      unawaited(deleteCapture(picture.path));
+    }
   }
 
   void _onMacOSCameraInitialized(CameraMacOSController controller) {
@@ -178,80 +298,68 @@ class _SignRecognitionExerciseBodyState
     };
   }
 
+  void _submitResult(bool result) {
+    if (_resultSubmitted) return;
+    _resultSubmitted = true;
+    _recognitionTimer?.cancel();
+    _recognitionTimer = null;
+    widget.onResult(result);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final isMacOS = defaultTargetPlatform == TargetPlatform.macOS;
-    final cameraTooltip = _cameraEnabled ? 'Turn camera off' : 'Turn camera on';
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          SignPrompt(
-            letter: widget.letter,
-            prompt: 'Can you make this sign?',
-            letterColor: colors.primary,
-            borderColor: colors.outlineVariant,
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: _cameraEnabled || _cameraLoading || _cameraError != null
-                ? CameraPreviewPanel(
-                    isMacOS: isMacOS,
-                    controller: _cameraController,
-                    isLoading: _cameraLoading,
-                    error: _cameraError,
-                    onMacOSCameraInitialized: _onMacOSCameraInitialized,
-                  )
-                : _CameraOffPlaceholder(color: colors.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          Tooltip(
-            message: cameraTooltip,
-            child: FilledButton.tonalIcon(
-              onPressed: _toggleCamera,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(54),
-              ),
-              icon: Icon(
-                _cameraEnabled
-                    ? Icons.videocam_rounded
-                    : Icons.videocam_outlined,
-              ),
-              label: Text(
-                _cameraEnabled ? 'Turn camera off' : 'Practice with camera',
-              ),
-            ),
-          ),
-        ],
+    final cameraTooltip = _cameraEnabled ? 'Close camera' : 'Open camera';
+    final cameraToggle = Tooltip(
+      message: cameraTooltip,
+      child: IconButton.filledTonal(
+        onPressed: _resultSubmitted || _cameraLoading ? null : _toggleCamera,
+        icon: Icon(
+          _cameraEnabled ? Icons.close_rounded : Icons.videocam_rounded,
+        ),
       ),
     );
-  }
-}
 
-class _CameraOffPlaceholder extends StatelessWidget {
-  const _CameraOffPlaceholder({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.videocam_outlined, size: 48, color: color),
-          const SizedBox(height: 8),
-          Text(
-            'Turn on the camera to practice',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: color,
+    return Column(
+      children: [
+        Expanded(
+          child: _cameraEnabled || _cameraLoading || _cameraError != null
+              ? CameraPreviewPanel(
+                  isMacOS: defaultTargetPlatform == TargetPlatform.macOS,
+                  controller: _cameraController,
+                  isLoading: _cameraLoading,
+                  error: _cameraError,
+                  onMacOSCameraInitialized: _onMacOSCameraInitialized,
+                  topRightAction: cameraToggle,
+                )
+              : Center(
+                  child: CameraPreviewPanel(
+                    isMacOS: false,
+                    controller: null,
+                    isLoading: false,
+                    error: null,
+                    isBlank: true,
+                    onMacOSCameraInitialized: (_) {},
+                    topRightAction: cameraToggle,
+                  ),
                 ),
-            textAlign: TextAlign.center,
+        ),
+        if (_recognitionStatus != null && _cameraError == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_recognitionStatus!, textAlign: TextAlign.center),
           ),
-        ],
-      ),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton.icon(
+                onPressed: _resultSubmitted ? null : () => _submitResult(true),
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text("Can't open camera right now."),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

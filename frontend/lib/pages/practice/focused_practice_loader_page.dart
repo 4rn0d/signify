@@ -3,19 +3,20 @@ import 'package:frontend/models/learning_models.dart';
 import 'package:frontend/services/auth_service.dart';
 import 'package:frontend/services/learning_service.dart';
 
-import 'focused_practice_session_page.dart';
+import 'focused_practice_page.dart';
 
-class LearningBlockPage extends StatefulWidget {
-  const LearningBlockPage({this.learningService, super.key});
+class FocusedPracticeLoaderPage extends StatefulWidget {
+  const FocusedPracticeLoaderPage({this.learningService, super.key});
 
   final LearningService? learningService;
 
   @override
-  State<LearningBlockPage> createState() => _LearningBlockPageState();
+  State<FocusedPracticeLoaderPage> createState() =>
+      _FocusedPracticeLoaderPageState();
 }
 
-class _LearningBlockPageState extends State<LearningBlockPage> {
-  late final Future<LearningBlock>? _blockFuture;
+class _FocusedPracticeLoaderPageState extends State<FocusedPracticeLoaderPage> {
+  late final Future<_FocusedPracticeData>? _dataFuture;
   String? _error;
 
   @override
@@ -24,22 +25,35 @@ class _LearningBlockPageState extends State<LearningBlockPage> {
     final uid = AuthService().currentUser?.uid;
     if (uid == null) {
       _error = 'Sign in to generate a personal learning block.';
+      _dataFuture = null;
       return;
     }
-    _blockFuture = (widget.learningService ?? LearningService())
-        .generateLearningBlock(uid, language: 'ASL');
+    final service = widget.learningService ?? LearningService();
+    _dataFuture = _loadData(service, uid);
+  }
+
+  Future<_FocusedPracticeData> _loadData(
+    LearningService service,
+    String uid,
+  ) async {
+    final blockFuture = service.generateLearningBlock(uid, language: 'ASL');
+    final wordsFuture = service.eligibleWords(uid, language: 'ASL');
+    return (
+      block: await blockFuture,
+      words: await wordsFuture,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     if (_error != null) return _messagePage(_error!);
 
-    return FutureBuilder<LearningBlock>(
-      future: _blockFuture,
+    return FutureBuilder<_FocusedPracticeData>(
+      future: _dataFuture,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return _messagePage(
-            'Could not generate your learning block: ${snapshot.error}',
+            'Could not load focused practice: ${snapshot.error}',
           );
         }
         if (!snapshot.hasData) {
@@ -48,7 +62,8 @@ class _LearningBlockPageState extends State<LearningBlockPage> {
           );
         }
 
-        final block = snapshot.data!;
+        final data = snapshot.data!;
+        final block = data.block;
         if (block.letters.isEmpty) {
           return _messagePage(
             block.activeLetterCount == 0
@@ -57,9 +72,10 @@ class _LearningBlockPageState extends State<LearningBlockPage> {
           );
         }
 
-        return FocusedPracticeSessionPage(
+        return FocusedPracticePage(
           letters:
               block.letters.map((item) => item.letter).toList(growable: false),
+          words: data.words,
           learningService: widget.learningService,
         );
       },
@@ -78,6 +94,11 @@ class _LearningBlockPageState extends State<LearningBlockPage> {
         ),
       );
 }
+
+typedef _FocusedPracticeData = ({
+  LearningBlock block,
+  List<LearningWord> words,
+});
 
 class _Message extends StatelessWidget {
   const _Message({required this.message});

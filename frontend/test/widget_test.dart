@@ -44,7 +44,7 @@ void main() {
     }
   });
 
-  testWidgets('opens on the Signify menu and navigates to training', (
+  testWidgets('opens on the Signify menu and navigates to practice', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -62,88 +62,18 @@ void main() {
       find.text('Learn sign language, one sign at a time.'),
       findsOneWidget,
     );
-    expect(find.text('Start learning'), findsOneWidget);
+    expect(find.text('Start practicing'), findsOneWidget);
     expect(find.text('ENDLESS PRACTICE'), findsNothing);
 
-    await tester.tap(find.text('Start learning'));
+    await tester.tap(find.text('Start practicing'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Choose your practice'), findsOneWidget);
-    expect(find.text('Endless Practice'), findsOneWidget);
-    expect(find.text('Focused Practice'), findsOneWidget);
-    expect(find.text('10 Questions'), findsNothing);
-
-    await tester.tap(find.text('Endless Practice'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('ENDLESS PRACTICE'), findsOneWidget);
-    expect(find.text('Learn the alphabet'), findsOneWidget);
-    expect(find.text('A'), findsOneWidget);
-    expect(find.text('Practice the ASL sign for A.'), findsOneWidget);
-    expect(find.byTooltip('Turn camera on'), findsOneWidget);
-    expect(find.byType(Image), findsOneWidget);
-
-    await tester.tap(find.text('Done'));
-    await tester.pump();
-    final avatar = tester.widget<GragasAvatar>(find.byType(GragasAvatar));
-    expect(find.text('Practice the ASL sign for B.'), findsOneWidget);
-    expect(avatar.animation, GragasAnimation.drinkBarrel);
-    expect(avatar.animationTrigger, 1);
-    expect(find.text('2 / 26'), findsOneWidget);
+    expect(find.text('Choose your practice'), findsNothing);
+    expect(find.text('Focused practice'), findsOneWidget);
     expect(
-      (tester.widget<Image>(find.byType(Image)).image as AssetImage).assetName,
-      'assets/asl-signs/B.png',
+      find.text('Sign in to generate a personal learning block.'),
+      findsOneWidget,
     );
-
-    for (var letter = 0; letter < 24; letter++) {
-      await tester.tap(find.text('Done'));
-      await tester.pump();
-    }
-    expect(
-      tester.widget<GragasAvatar>(find.byType(GragasAvatar)).animationTrigger,
-      25,
-    );
-    expect(find.text('Practice the ASL sign for Z.'), findsOneWidget);
-    expect(find.text('26 / 26'), findsOneWidget);
-    expect(
-      (tester.widget<Image>(find.byType(Image)).image as AssetImage).assetName,
-      'assets/asl-signs/Z.png',
-    );
-
-    await tester.tap(find.text('Done'));
-    await tester.pump();
-    expect(find.text('Practice the ASL sign for A.'), findsOneWidget);
-    expect(find.text('1 / 26'), findsOneWidget);
-    expect(find.text('Done'), findsOneWidget);
-
-    final avatarState = tester.state(find.byType(GragasAvatar));
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-    });
-    await tester.tap(find.text('Practice with camera (optional)'));
-    await tester.pump();
-
-    expect(find.byTooltip('Turn camera off'), findsOneWidget);
-    expect(
-      identical(tester.state(find.byType(GragasAvatar)), avatarState),
-      isTrue,
-    );
-    expect(find.byType(Image), findsOneWidget);
-
-    tester.view.physicalSize = const Size(1200, 800);
-    await tester.pump();
-    expect(
-      identical(tester.state(find.byType(GragasAvatar)), avatarState),
-      isTrue,
-    );
-
-    debugDefaultTargetPlatformOverride = null;
-    await tester.tap(find.byTooltip('Back to menu'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Choose your practice'), findsOneWidget);
     expect(find.text('10 Questions'), findsNothing);
     expect(find.text('ENDLESS PRACTICE'), findsNothing);
   });

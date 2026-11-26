@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 
-import 'endless_practice_page.dart';
-import 'learning_block_page.dart';
+import 'focused_practice_loader_page.dart';
 
-class TrainingPage extends StatelessWidget {
-  const TrainingPage({super.key});
+class PracticeSelectionPage extends StatelessWidget {
+  const PracticeSelectionPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Training')),
+      appBar: AppBar(title: const Text('Practice')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
@@ -30,18 +29,6 @@ class TrainingPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       ListTile(
-                        leading: const Icon(Icons.all_inclusive),
-                        title: const Text('Endless Practice'),
-                        subtitle: const Text('Practice letters at your pace.'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const EndlessPracticePage(),
-                          ),
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
                         leading: const Icon(Icons.tune_rounded),
                         title: const Text('Focused Practice'),
                         subtitle: const Text(
@@ -50,7 +37,7 @@ class TrainingPage extends StatelessWidget {
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
-                            builder: (_) => const LearningBlockPage(),
+                            builder: (_) => const FocusedPracticeLoaderPage(),
                           ),
                         ),
                       ),

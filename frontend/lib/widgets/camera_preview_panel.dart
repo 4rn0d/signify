@@ -9,6 +9,8 @@ class CameraPreviewPanel extends StatelessWidget {
     required this.isLoading,
     required this.error,
     required this.onMacOSCameraInitialized,
+    this.isBlank = false,
+    this.topRightAction,
     super.key,
   });
 
@@ -16,11 +18,14 @@ class CameraPreviewPanel extends StatelessWidget {
   final CameraController? controller;
   final bool isLoading;
   final String? error;
+  final bool isBlank;
   final ValueChanged<CameraMacOSController> onMacOSCameraInitialized;
+  final Widget? topRightAction;
 
   @override
   Widget build(BuildContext context) {
     final preview = switch (true) {
+      _ when isBlank => const SizedBox.shrink(),
       _ when error != null => _CameraStatus(
           icon: Icons.videocam_off_outlined,
           message: error!,
@@ -62,7 +67,18 @@ class CameraPreviewPanel extends StatelessWidget {
             borderRadius: BorderRadius.circular(24),
             child: ColoredBox(
               color: Colors.black,
-              child: Center(child: preview),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Center(child: preview),
+                  if (topRightAction != null)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: topRightAction!,
+                    ),
+                ],
+              ),
             ),
           ),
         ),
