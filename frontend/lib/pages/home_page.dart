@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'profile_page.dart';
-import 'training_page.dart';
 import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
+import 'practice/focused_practice_loader_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -32,15 +32,17 @@ class HomePage extends StatelessWidget {
                     'Signify',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: colors.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
+                          color: colors.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     'Learn sign language, one sign at a time.',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyLarge
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyLarge
                         ?.copyWith(color: colors.onSurfaceVariant),
                   ),
                   const SizedBox(height: 32),
@@ -50,12 +52,12 @@ class HomePage extends StatelessWidget {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute<void>(
-                            builder: (context) => const TrainingPage(),
+                            builder: (_) => const FocusedPracticeLoaderPage(),
                           ),
                         );
                       },
                       icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('Start learning'),
+                      label: const Text('Start practicing'),
                     ),
                   ),
                   TextButton.icon(

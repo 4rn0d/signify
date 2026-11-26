@@ -27,7 +27,7 @@ class Menu extends World {
     required this.onGragasPressed,
     required this.onQuestsPressed,
     required this.onLeaderboardPressed,
-    required this.onSettingsPressed,
+    required this.onProfilePressed,
     required this.onToKitchenPressed,
     required this.onRoomPositionsLoaded,
   });
@@ -35,7 +35,7 @@ class Menu extends World {
   final void Function() onGragasPressed;
   final void Function() onQuestsPressed;
   final void Function() onLeaderboardPressed;
-  final void Function() onSettingsPressed;
+  final void Function() onProfilePressed;
   final void Function() onToKitchenPressed;
   final void Function(Map<String, Vector2> positions) onRoomPositionsLoaded;
   late TiledComponent menu;
@@ -69,7 +69,7 @@ class Menu extends World {
     add(
       GragasMapButton(
         position: Vector2(gragasObject.x, gragasObject.y),
-        label: 'Training',
+        label: 'Practice',
         onPressed: onGragasPressed,
       ),
     );
@@ -104,18 +104,18 @@ class Menu extends World {
       ),
     );
 
-    final settingsObject = buttonLayer.objects.singleWhere(
-      (object) => object.name == 'settings',
+    final profileObject = buttonLayer.objects.singleWhere(
+      (object) => object.name == 'profile',
     );
     add(
       MapActionHotspot.fromPolygon(
-        objectPosition: Vector2(settingsObject.x, settingsObject.y),
+        objectPosition: Vector2(profileObject.x, profileObject.y),
         polygonPoints: [
-          for (final point in settingsObject.polygon)
+          for (final point in profileObject.polygon)
             Vector2(point.x.toDouble(), point.y.toDouble()),
         ],
-        label: 'Settings',
-        onPressed: onSettingsPressed,
+        label: 'Profile',
+        onPressed: onProfilePressed,
       ),
     );
 
