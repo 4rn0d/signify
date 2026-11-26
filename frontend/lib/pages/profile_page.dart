@@ -5,10 +5,18 @@ import '../services/profile_stats_service.dart';
 import '../services/user_profile_service.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key, required this.email, required this.profile});
+  const ProfilePage({
+    super.key,
+    required this.email,
+    required this.profile,
+    this.statsService,
+    this.profileService,
+  });
 
   final String? email;
   final Future<UserProfile> profile;
+  final ProfileStatsService? statsService;
+  final UserProfileService? profileService;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -18,12 +26,10 @@ class _ProfileData {
   const _ProfileData({
     required this.profile,
     required this.stats,
-    required this.leaderboard,
   });
 
   final UserProfile profile;
   final ProfileStats stats;
-  final List<LeaderboardEntry> leaderboard;
 }
 
 class _AvatarOption {
@@ -53,8 +59,8 @@ const _avatarOptions = <_AvatarOption>[
 ];
 
 class _ProfilePageState extends State<ProfilePage> {
-  final _service = ProfileStatsService();
-  final _profiles = UserProfileService();
+  late final _service = widget.statsService ?? ProfileStatsService();
+  late final _profiles = widget.profileService ?? UserProfileService();
   late final Future<_ProfileData> _data;
   int _avatarIndex = 0;
 
@@ -64,16 +70,11 @@ class _ProfilePageState extends State<ProfilePage> {
     _data = _load();
   }
 
-  /// Index of the saved avatar, or 0 (the first icon) when the profile has
-  /// no iconId yet or the id is unknown.
   int _avatarIndexFor(String? iconId) {
     final index = _avatarOptions.indexWhere((option) => option.id == iconId);
     return index == -1 ? 0 : index;
   }
 
-  /// Fetches the saved icon id from Firestore each time the page opens.
-  /// Falls back to the id already on [profile] if the fetch fails, and the
-  /// caller then falls back to the first icon when that is null too.
   Future<String?> _fetchIconId(UserProfile profile) async {
     final user = AuthService().currentUser;
     if (user == null) return profile.iconId;
@@ -87,15 +88,16 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<_ProfileData> _load() async {
     final profile = await widget.profile;
     _avatarIndex = _avatarIndexFor(await _fetchIconId(profile));
-    final stats = await _service.loadStats();
-    final leaderboard = await _service.loadLeaderboard(
-      currentUserName: profile.displayName,
-    );
-    return _ProfileData(
-      profile: profile,
-      stats: stats,
-      leaderboard: leaderboard,
-    );
+    final uid = AuthService().currentUser?.uid;
+    final stats = uid == null
+        ? ProfileStats.compute(
+            activity: const [],
+            progress: const [],
+            masteryThreshold: 1,
+            now: DateTime.now(),
+          )
+        : await _service.loadStats(uid);
+    return _ProfileData(profile: profile, stats: stats);
   }
 
   Future<void> _pickAvatar() async {
@@ -194,10 +196,6 @@ class _ProfilePageState extends State<ProfilePage> {
                           activeDays: data.stats.activeDays,
                         ),
                       );
-                      final leaderboard = _SectionCard(
-                        title: 'Weekly leaderboard',
-                        child: _Leaderboard(entries: data.leaderboard),
-                      );
 
                       if (!wide) {
                         return Column(
@@ -207,8 +205,6 @@ class _ProfilePageState extends State<ProfilePage> {
                             stats,
                             const SizedBox(height: 16),
                             calendar,
-                            const SizedBox(height: 16),
-                            leaderboard,
                           ],
                         );
                       }
@@ -220,18 +216,9 @@ class _ProfilePageState extends State<ProfilePage> {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                flex: 3,
-                                child: Column(
-                                  children: [
-                                    stats,
-                                    const SizedBox(height: 24),
-                                    calendar,
-                                  ],
-                                ),
-                              ),
+                              Expanded(flex: 3, child: stats),
                               const SizedBox(width: 24),
-                              Expanded(flex: 2, child: leaderboard),
+                              Expanded(flex: 2, child: calendar),
                             ],
                           ),
                         ],
@@ -398,9 +385,8 @@ class _AvatarPickerDialog extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: i == selected
-                          ? colors.primary
-                          : Colors.transparent,
+                      color:
+                          i == selected ? colors.primary : Colors.transparent,
                       width: 3,
                     ),
                   ),
@@ -452,8 +438,8 @@ class _SectionCard extends StatelessWidget {
               Text(
                 title,
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 16),
               child,
@@ -469,11 +455,7 @@ class _SectionCard extends StatelessWidget {
 // Stats tiles
 // ---------------------------------------------------------------------------
 
-String _formatMinutes(int minutes) {
-  final h = minutes ~/ 60;
-  final m = minutes % 60;
-  return h == 0 ? '${m}m' : '${h}h ${m}m';
-}
+String _days(int count) => count == 1 ? '1 day' : '$count days';
 
 class _StatsWrap extends StatelessWidget {
   const _StatsWrap({
@@ -505,17 +487,12 @@ class _StatsWrap extends StatelessWidget {
         _StatTile(
           icon: Icons.local_fire_department_outlined,
           label: 'Daily streak',
-          value: '${stats.currentStreak} days',
+          value: _days(stats.currentStreak),
         ),
         _StatTile(
           icon: Icons.emoji_events_outlined,
           label: 'Longest streak',
-          value: '${stats.longestStreak} days',
-        ),
-        _StatTile(
-          icon: Icons.timer_outlined,
-          label: 'Time learning',
-          value: _formatMinutes(stats.minutesLearned),
+          value: _days(stats.longestStreak),
         ),
         _StatTile(
           icon: Icons.sign_language_outlined,
@@ -524,13 +501,15 @@ class _StatsWrap extends StatelessWidget {
         ),
         _StatTile(
           icon: Icons.check_circle_outline,
-          label: 'Lessons completed',
-          value: '${stats.lessonsCompleted}',
+          label: 'Exercises done',
+          value: '${stats.exercisesCompleted}',
         ),
         _StatTile(
           icon: Icons.track_changes_outlined,
           label: 'Quiz accuracy',
-          value: '${(stats.quizAccuracy * 100).round()}%',
+          value: stats.quizAccuracy == null
+              ? '—'
+              : '${(stats.quizAccuracy! * 100).round()}%',
         ),
       ],
     );
@@ -714,87 +693,6 @@ class _DayCell extends StatelessWidget {
           fontWeight: active ? FontWeight.bold : FontWeight.normal,
         ),
       ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Weekly leaderboard
-// ---------------------------------------------------------------------------
-
-class _Leaderboard extends StatelessWidget {
-  const _Leaderboard({required this.entries});
-
-  final List<LeaderboardEntry> entries;
-
-  static const _medalColors = [
-    Color(0xFFFFC107), // gold
-    Color(0xFFB0BEC5), // silver
-    Color(0xFFCD7F32), // bronze
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return Column(
-      children: [
-        for (var i = 0; i < entries.length; i++)
-          Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: entries[i].isCurrentUser
-                  ? colors.primaryContainer
-                  : colors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 32,
-                  child: i < 3
-                      ? Icon(Icons.workspace_premium, color: _medalColors[i])
-                      : Text(
-                    '${i + 1}',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.titleMedium,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: colors.secondaryContainer,
-                  child: Text(
-                    entries[i].name.isEmpty
-                        ? '?'
-                        : entries[i].name[0].toUpperCase(),
-                    style: TextStyle(color: colors.onSecondaryContainer),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    entries[i].isCurrentUser
-                        ? '${entries[i].name} (you)'
-                        : entries[i].name,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: entries[i].isCurrentUser
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ),
-                Text(
-                  '${entries[i].weeklyXp} XP',
-                  style: theme.textTheme.labelLarge,
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 }

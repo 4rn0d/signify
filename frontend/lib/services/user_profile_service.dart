@@ -69,12 +69,23 @@ class UserProfileService {
     return UserProfile.fromMap(data);
   }
 
+  Stream<UserProfile> watchProfile(User user) {
+    return _users.doc(user.uid).snapshots().map((snapshot) {
+      final data = snapshot.data();
+      if (data == null) {
+        throw StateError('User profile does not exist.');
+      }
+      return UserProfile.fromMap(data);
+    });
+  }
+
   Future<void> saveIconId(User user, String iconId) {
     return _users.doc(user.uid).set({
       'iconId': iconId,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
+
   Future<String?> fetchIconId(User user) async {
     final snapshot = await _users.doc(user.uid).get();
     final iconId = snapshot.data()?['iconId'];

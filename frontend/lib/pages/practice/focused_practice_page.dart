@@ -49,6 +49,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
   Timer? _matchingErrorTimer;
   int _questionIndex = 0;
   int _score = 0;
+  int _xpEarned = 0;
   bool? _isCorrect;
   String? _feedback;
   bool _saving = false;
@@ -329,6 +330,15 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
             ],
           );
       }
+      if (isCorrect && mounted) {
+        setState(
+            () => _xpEarned += LearningService.xpPerCorrectExercise);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('+${LearningService.xpPerCorrectExercise} XP'),
+          ),
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -419,7 +429,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
             constraints: const BoxConstraints(maxWidth: 620),
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: _PracticeComplete(score: _score),
+              child: _PracticeComplete(score: _score, xpEarned: _xpEarned),
             ),
           ),
         ),
@@ -429,9 +439,10 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
 }
 
 class _PracticeComplete extends StatelessWidget {
-  const _PracticeComplete({required this.score});
+  const _PracticeComplete({required this.score, required this.xpEarned});
 
   final int score;
+  final int xpEarned;
 
   @override
   Widget build(BuildContext context) {
@@ -444,6 +455,14 @@ class _PracticeComplete extends StatelessWidget {
             style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
         Text('You got $score out of 10 right.'),
+        const SizedBox(height: 8),
+        Text(
+          '+$xpEarned XP',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+        ),
         const SizedBox(height: 24),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),

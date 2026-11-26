@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/services/auth_service.dart';
+import 'package:frontend/services/profile_stats_service.dart';
 import 'package:frontend/services/user_profile_service.dart';
-
-import '../pages/profile_page.dart';
 
 class MapHud extends StatefulWidget {
   const MapHud({super.key});
@@ -13,30 +12,43 @@ class MapHud extends StatefulWidget {
 
 class _MapHudState extends State<MapHud> {
   late final Future<UserProfile>? _profile;
+  late final Stream<UserProfile>? _profileUpdates;
+  late final Stream<int>? _streakUpdates;
 
   @override
   void initState() {
     super.initState();
     final user = AuthService().currentUser;
-    _profile =
-        user == null ? null : UserProfileService().loadOrCreateProfile(user);
+    final profileService = UserProfileService();
+    _streakUpdates = user == null
+        ? null
+        : ProfileStatsService().watchCurrentStreak(user.uid);
+    if (user == null) {
+      _profile = null;
+      _profileUpdates = null;
+    } else {
+      final profile = profileService.loadOrCreateProfile(user);
+      _profile = profile;
+      _profileUpdates = profile
+          .asStream()
+          .asyncExpand((_) => profileService.watchProfile(user));
+    }
   }
 
-  void _openProfile() {
-    final user = AuthService().currentUser;
-    final profile = _profile;
-    if (user == null || profile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No signed-in user was found.')),
-      );
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ProfilePage(email: user.email, profile: profile),
-      ),
-    );
+  String _streakValue(AsyncSnapshot<int> snapshot) {
+    if (_streakUpdates == null) return '—';
+    if (snapshot.hasError) return '!';
+    return snapshot.data?.toString() ?? '…';
   }
+
+  String _streakTooltip(AsyncSnapshot<int> snapshot) {
+    if (_streakUpdates == null) return 'No signed-in profile';
+    if (snapshot.hasError) return 'Could not load streak: ${snapshot.error}';
+    final days = snapshot.data;
+    if (days == null) return 'Daily streak';
+    return 'Daily streak: ${days == 1 ? '1 day' : '$days days'}';
+  }
+
   String _xpValue(AsyncSnapshot<UserProfile> snapshot) {
     if (_profile == null) return '—';
     if (snapshot.hasError) return '!';
@@ -90,8 +102,8 @@ class _MapHudState extends State<MapHud> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            FutureBuilder<UserProfile>(
-                              future: _profile,
+                            StreamBuilder<UserProfile>(
+                              stream: _profileUpdates,
                               builder: (context, snapshot) {
                                 return Tooltip(
                                   message: _xpTooltip(snapshot),
@@ -136,30 +148,22 @@ class _MapHudState extends State<MapHud> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              '67',
-                              style: Theme.of(context).textTheme.labelLarge,
+                            StreamBuilder<int>(
+                              stream: _streakUpdates,
+                              builder: (context, snapshot) {
+                                return Tooltip(
+                                  message: _streakTooltip(snapshot),
+                                  child: Text(
+                                    _streakValue(snapshot),
+                                    style:
+                                        Theme.of(context).textTheme.labelLarge,
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
                       ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Material(
-                    color: colors.surface,
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: BorderSide(color: colors.primary, width: 5),
-                    ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: _openProfile,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        child: Icon(Icons.person_outline, color: colors.primary),
-                      ),
                     ),
                   ),
                 ])),

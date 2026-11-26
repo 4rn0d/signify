@@ -2,6 +2,7 @@ import 'package:flame/game.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:frontend/game/menu_game.dart';
+import 'package:frontend/pages/leaderboard_page.dart';
 import 'package:frontend/pages/map_destination_placeholder.dart';
 import 'package:frontend/pages/profile_page.dart';
 import 'package:frontend/pages/practice/focused_practice_loader_page.dart';
@@ -42,14 +43,11 @@ Future<void> main() async {
         onLeaderboardPressed: () {
           navigatorKey.currentState?.push(
             MaterialPageRoute<void>(
-              builder: (_) => const MapDestinationPlaceholder(
-                title: 'Leaderboard',
-                icon: Icons.leaderboard_outlined,
-              ),
+              builder: (_) => const LeaderboardPage(),
             ),
           );
         },
-        onSettingsPressed: () {
+        onProfilePressed: () {
           final user = AuthService().currentUser;
           if (user == null) {
             final context = navigatorKey.currentContext;

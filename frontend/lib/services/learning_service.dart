@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:frontend/models/learning_models.dart';
 
 class LearningService {
+  static const xpPerCorrectExercise = 10;
+
   LearningService({FirebaseFirestore? firestore})
       : _firestore = firestore ?? FirebaseFirestore.instance;
 
@@ -175,7 +177,9 @@ class LearningService {
     final attemptCollection =
         _firestore.collection('users').doc(uid).collection('attempts');
     final attemptDocument = attemptCollection.doc();
+    final profileDocument = _firestore.collection('users').doc(uid);
     final configDocument = _configDocument;
+    final isCorrect = results.every((result) => result.isCorrect);
     final progressDocuments = {
       for (final result in results)
         result.letterId: progressCollection.doc(result.letterId),
@@ -193,6 +197,12 @@ class LearningService {
       final snapshots = <String, DocumentSnapshot<Map<String, dynamic>>>{};
       for (final entry in progressDocuments.entries) {
         snapshots[entry.key] = await transaction.get(entry.value);
+      }
+      if (isCorrect) {
+        final profileSnapshot = await transaction.get(profileDocument);
+        if (!profileSnapshot.exists) {
+          throw StateError('User profile does not exist for XP award.');
+        }
       }
 
       final resultsByLetter = <String, List<bool>>{};
@@ -223,8 +233,16 @@ class LearningService {
 
       transaction.set(attemptDocument, {
         ...attempt,
+        'isCorrect': isCorrect,
+        'xpEarned': isCorrect ? xpPerCorrectExercise : 0,
         'createdAt': FieldValue.serverTimestamp(),
       });
+      if (isCorrect) {
+        transaction.update(profileDocument, {
+          'exp': FieldValue.increment(xpPerCorrectExercise),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 

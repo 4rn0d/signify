@@ -13,14 +13,14 @@ class MenuGame extends FlameGame with DragCallbacks {
     required VoidCallback onGragasPressed,
     required VoidCallback onQuestsPressed,
     required VoidCallback onLeaderboardPressed,
-    required VoidCallback onSettingsPressed,
+    required VoidCallback onProfilePressed,
     required VoidCallback onToKitchenPressed
   }) {
     menu = Menu(
       onGragasPressed: onGragasPressed,
       onQuestsPressed: onQuestsPressed,
       onLeaderboardPressed: onLeaderboardPressed,
-      onSettingsPressed: onSettingsPressed,
+      onProfilePressed: onProfilePressed,
       onToKitchenPressed: onToKitchenPressed,
       onRoomPositionsLoaded: _setRoomPositions,
     );
