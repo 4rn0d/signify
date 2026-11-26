@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/exercises/multi_letter_matching_exercise.dart';
+import 'package:frontend/exercises/sign_choice_exercise.dart';
 import 'package:frontend/exercises/sign_signing_exercise.dart';
 import 'package:frontend/exercises/sign_recognition_exercise.dart';
 import 'package:frontend/exercises/word_spelling_exercise.dart';
@@ -73,9 +74,13 @@ void main() {
       final wrongLetter = exercise.letterOptions.firstWhere(
         (letter) => letter != exercise.signLetters.first,
       );
-      await tester.tap(find.byKey(const ValueKey('matching-sign-0')));
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('matching-letter-$wrongLetter')));
+      await tester.pumpAndSettle();
+      exercise = tester.widget<MultiLetterMatchingExercise>(
+        find.byType(MultiLetterMatchingExercise),
+      );
+      expect(exercise.selectedLetter, wrongLetter);
+      await tester.tap(find.byKey(const ValueKey('matching-sign-0')));
       await tester.pump();
       expect(find.text('Not a match. Try another pair.'), findsOneWidget);
       exercise = tester.widget<MultiLetterMatchingExercise>(
@@ -92,12 +97,39 @@ void main() {
       expect(exercise.incorrectSignIndex, isNull);
 
       for (var index = 0; index < exercise.signLetters.length; index++) {
-        await tester.tap(find.byKey(ValueKey('matching-sign-$index')));
-        await tester.pumpAndSettle();
-        await tester.tap(
-          find.byKey(
-              ValueKey('matching-letter-${exercise.signLetters[index]}')),
-        );
+        if (index.isEven) {
+          await tester.tap(find.byKey(ValueKey('matching-sign-$index')));
+          await tester.pumpAndSettle();
+          expect(
+            tester
+                .widget<MultiLetterMatchingExercise>(
+                  find.byType(MultiLetterMatchingExercise),
+                )
+                .selectedSignIndex,
+            index,
+          );
+          await tester.tap(
+            find.byKey(
+              ValueKey('matching-letter-${exercise.signLetters[index]}'),
+            ),
+          );
+        } else {
+          await tester.tap(
+            find.byKey(
+              ValueKey('matching-letter-${exercise.signLetters[index]}'),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester
+                .widget<MultiLetterMatchingExercise>(
+                  find.byType(MultiLetterMatchingExercise),
+                )
+                .selectedLetter,
+            exercise.signLetters[index],
+          );
+          await tester.tap(find.byKey(ValueKey('matching-sign-$index')));
+        }
         await tester.pumpAndSettle();
         final updatedExercise = tester.widget<MultiLetterMatchingExercise>(
           find.byType(MultiLetterMatchingExercise),
@@ -132,6 +164,50 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    Future<void> completeChoiceExercise({
+      required SignChoiceType type,
+      bool chooseIncorrectly = false,
+      bool finishPractice = false,
+    }) async {
+      final exercise = tester.widget<SignChoiceExercise>(
+        find.byType(SignChoiceExercise),
+      );
+      expect(exercise.type, type);
+      expect(exercise.options, hasLength(4));
+      final selectedOption = chooseIncorrectly
+          ? exercise.options.firstWhere(
+              (option) => option != exercise.targetLetter,
+            )
+          : exercise.targetLetter;
+      await tester.tap(
+        find.byKey(ValueKey('sign-choice-$selectedOption')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          chooseIncorrectly
+              ? 'Not quite. Review the sign and try again.'
+              : 'Correct!',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<InkWell>(
+              find.descendant(
+                of: find.byKey(ValueKey('sign-choice-$selectedOption')),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .onTap,
+        isNull,
+      );
+      await tester.tap(
+        find.text(finishPractice ? 'Finish practice' : 'Continue'),
+      );
+      await tester.pumpAndSettle();
+    }
+
     await completeCameraExercise();
     expect(find.text('QUESTION 2 OF 10'), findsOneWidget);
     expect(find.byType(SignSigningExercise), findsOneWidget);
@@ -144,6 +220,26 @@ void main() {
     await completeCameraExercise();
 
     expect(find.text('QUESTION 3 OF 10'), findsOneWidget);
+    expect(find.byType(SignChoiceExercise), findsOneWidget);
+    expect(find.text('Which letter does this sign represent?'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Image && widget.semanticLabel == 'Sign for A',
+      ),
+      findsOneWidget,
+    );
+    await completeChoiceExercise(
+      type: SignChoiceType.signToLetter,
+      chooseIncorrectly: true,
+    );
+
+    expect(find.text('QUESTION 4 OF 10'), findsOneWidget);
+    expect(find.text('Select the sign for this letter.'), findsOneWidget);
+    expect(find.text('B'), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(4));
+    await completeChoiceExercise(type: SignChoiceType.letterToSign);
+
+    expect(find.text('QUESTION 5 OF 10'), findsOneWidget);
     expect(find.byType(WordSpellingExercise), findsOneWidget);
     expect(find.text('CAT'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
@@ -151,20 +247,21 @@ void main() {
     expect(find.text('Letter 1 of 3'), findsOneWidget);
     await completeCameraExercise(signCount: 3);
 
-    expect(find.text('QUESTION 4 OF 10'), findsOneWidget);
+    expect(find.text('QUESTION 6 OF 10'), findsOneWidget);
     expect(find.byType(MultiLetterMatchingExercise), findsOneWidget);
     expect(find.text('Match each sign with its letter.'), findsOneWidget);
     await completeMatchingExercise();
 
     await completeCameraExercise();
     await completeCameraExercise();
-    await completeCameraExercise(signCount: 3);
-    await completeMatchingExercise();
-    await completeCameraExercise();
-    await completeCameraExercise(finishPractice: true);
+    await completeChoiceExercise(type: SignChoiceType.signToLetter);
+    await completeChoiceExercise(
+      type: SignChoiceType.letterToSign,
+      finishPractice: true,
+    );
 
     expect(find.text('Practice complete!'), findsOneWidget);
-    expect(find.text('You got 10 out of 10 right.'), findsOneWidget);
+    expect(find.text('You got 9 out of 10 right.'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 }

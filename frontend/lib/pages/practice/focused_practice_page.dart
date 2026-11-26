@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:frontend/exercises/exercise.dart';
 import 'package:frontend/exercises/multi_letter_matching_exercise.dart';
+import 'package:frontend/exercises/sign_choice_exercise.dart';
 import 'package:frontend/exercises/sign_signing_exercise.dart';
 import 'package:frontend/exercises/word_spelling_exercise.dart';
 import 'package:frontend/models/learning_models.dart';
@@ -35,10 +36,13 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
   late final List<LearningLetter> _questions;
   late final List<LearningWord> _spellingWords;
   late final List<_ExerciseType> _exerciseTypes;
+  late List<String> _choiceOptions;
+  String? _selectedChoice;
   late List<String> _matchingSignLetters;
   late List<String> _matchingLetterOptions;
   late List<String?> _matchingAnswers;
   int? _selectedMatchingSignIndex;
+  String? _selectedMatchingLetter;
   int? _incorrectMatchingSignIndex;
   String? _incorrectMatchingLetter;
   String? _matchingFeedback;
@@ -69,6 +73,22 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
           type: SignSigningType.letter,
           onResult: _onCameraResult,
         ),
+      _ExerciseType.signToLetter => SignChoiceExercise(
+          targetLetter: character,
+          options: _choiceOptions,
+          type: SignChoiceType.signToLetter,
+          selectedOption: _selectedChoice,
+          answered: _isCorrect != null,
+          onOptionSelected: _onChoiceSelected,
+        ),
+      _ExerciseType.letterToSign => SignChoiceExercise(
+          targetLetter: character,
+          options: _choiceOptions,
+          type: SignChoiceType.letterToSign,
+          selectedOption: _selectedChoice,
+          answered: _isCorrect != null,
+          onOptionSelected: _onChoiceSelected,
+        ),
       _ExerciseType.wordSpelling => WordSpellingExercise(
           word: _currentWord.text,
           letters: _wordLetters(_currentWord),
@@ -79,6 +99,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
           letterOptions: _matchingLetterOptions,
           selectedAnswers: _matchingAnswers,
           selectedSignIndex: _selectedMatchingSignIndex,
+          selectedLetter: _selectedMatchingLetter,
           incorrectSignIndex: _incorrectMatchingSignIndex,
           incorrectLetter: _incorrectMatchingLetter,
           feedback: _matchingFeedback,
@@ -108,6 +129,8 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
     _exerciseTypes = [
       _ExerciseType.imageSigning,
       _ExerciseType.letterSigning,
+      _ExerciseType.signToLetter,
+      _ExerciseType.letterToSign,
       if (_spellingWords.isNotEmpty) _ExerciseType.wordSpelling,
       if (widget.letters
               .map((letter) => letter.character.trim().toUpperCase())
@@ -116,6 +139,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
           1)
         _ExerciseType.multiLetterMatching,
     ];
+    _prepareChoiceOptions();
     if (_exerciseTypes.contains(_ExerciseType.multiLetterMatching)) {
       _prepareMatching();
     }
@@ -146,6 +170,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
     _matchingLetterOptions = [..._matchingSignLetters]..shuffle(_random);
     _matchingAnswers = List<String?>.filled(_matchingSignLetters.length, null);
     _selectedMatchingSignIndex = null;
+    _selectedMatchingLetter = null;
     _incorrectMatchingSignIndex = null;
     _incorrectMatchingLetter = null;
     _matchingFeedback = null;
@@ -156,7 +181,9 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
 
     return switch (_exerciseType) {
       _ExerciseType.imageSigning ||
-      _ExerciseType.letterSigning =>
+      _ExerciseType.letterSigning ||
+      _ExerciseType.signToLetter ||
+      _ExerciseType.letterToSign =>
         'Not quite. Review the sign and try again.',
       _ExerciseType.wordSpelling =>
         'Not quite. Practice spelling each letter in the word.',
@@ -167,6 +194,12 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
 
   void _onMatchingSignSelected(int index) {
     if (_isCorrect != null) return;
+    final selectedLetter = _selectedMatchingLetter;
+    if (selectedLetter != null) {
+      unawaited(_matchPair(index, selectedLetter));
+      return;
+    }
+
     _matchingErrorTimer?.cancel();
     setState(() {
       _selectedMatchingSignIndex = index;
@@ -178,19 +211,35 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
 
   Future<void> _onMatchingLetterSelected(String letter) async {
     final selectedIndex = _selectedMatchingSignIndex;
-    if (_isCorrect != null || selectedIndex == null) return;
+    if (_isCorrect != null) return;
+    if (selectedIndex != null) {
+      await _matchPair(selectedIndex, letter);
+      return;
+    }
 
-    if (_matchingSignLetters[selectedIndex] != letter) {
-      _matchingErrorTimer?.cancel();
+    _matchingErrorTimer?.cancel();
+    setState(() {
+      _selectedMatchingLetter = letter;
+      _selectedMatchingSignIndex = null;
+      _incorrectMatchingSignIndex = null;
+      _incorrectMatchingLetter = null;
+      _matchingFeedback = null;
+    });
+  }
+
+  Future<void> _matchPair(int signIndex, String letter) async {
+    _matchingErrorTimer?.cancel();
+    if (_matchingSignLetters[signIndex] != letter) {
       setState(() {
         _selectedMatchingSignIndex = null;
-        _incorrectMatchingSignIndex = selectedIndex;
+        _selectedMatchingLetter = null;
+        _incorrectMatchingSignIndex = signIndex;
         _incorrectMatchingLetter = letter;
         _matchingFeedback = 'Not a match. Try another pair.';
       });
       _matchingErrorTimer = Timer(const Duration(milliseconds: 700), () {
         if (!mounted ||
-            _incorrectMatchingSignIndex != selectedIndex ||
+            _incorrectMatchingSignIndex != signIndex ||
             _incorrectMatchingLetter != letter) {
           return;
         }
@@ -203,12 +252,12 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
       return;
     }
 
-    _matchingErrorTimer?.cancel();
     final answers = [..._matchingAnswers];
-    answers[selectedIndex] = letter;
+    answers[signIndex] = letter;
     setState(() {
-      _matchingAnswers[selectedIndex] = letter;
+      _matchingAnswers[signIndex] = letter;
       _selectedMatchingSignIndex = null;
+      _selectedMatchingLetter = null;
       _incorrectMatchingSignIndex = null;
       _incorrectMatchingLetter = null;
       _matchingFeedback = 'Correct match!';
@@ -238,6 +287,8 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
       switch (_exerciseType) {
         case _ExerciseType.imageSigning:
         case _ExerciseType.letterSigning:
+        case _ExerciseType.signToLetter:
+        case _ExerciseType.letterToSign:
           await learningService.recordLetterAttempt(
             uid: uid,
             exerciseType: 'focused_practice_${_exerciseType.name}',
@@ -299,6 +350,7 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
       _questionIndex++;
       _isCorrect = null;
       _feedback = null;
+      _prepareChoiceOptions();
       if (_exerciseType == _ExerciseType.multiLetterMatching) {
         _prepareMatching();
       }
@@ -307,6 +359,24 @@ class _FocusedPracticePageState extends State<FocusedPracticePage> {
 
   Future<void> _onCameraResult(bool signCompleted) async {
     await _selectAnswer(signCompleted);
+  }
+
+  void _prepareChoiceOptions() {
+    final target = _currentLetter.character.trim().toUpperCase();
+    final distractors = _alphabet
+        .split('')
+        .where((letter) => letter != target)
+        .toList()
+      ..shuffle(_random);
+    _choiceOptions = [target, ...distractors.take(3)]..shuffle(_random);
+    _selectedChoice = null;
+  }
+
+  void _onChoiceSelected(String choice) {
+    if (_isCorrect != null) return;
+    setState(() => _selectedChoice = choice);
+    unawaited(
+        _selectAnswer(choice == _currentLetter.character.trim().toUpperCase()));
   }
 
   Future<void> _onWordResult(List<bool> letterResults) async {
@@ -387,6 +457,8 @@ class _PracticeComplete extends StatelessWidget {
 enum _ExerciseType {
   imageSigning,
   letterSigning,
+  signToLetter,
+  letterToSign,
   wordSpelling,
   multiLetterMatching,
 }

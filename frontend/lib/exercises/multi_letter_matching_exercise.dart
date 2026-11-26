@@ -9,6 +9,7 @@ class MultiLetterMatchingExercise extends Exercise {
     required this.letterOptions,
     required this.selectedAnswers,
     required this.selectedSignIndex,
+    required this.selectedLetter,
     required this.incorrectSignIndex,
     required this.incorrectLetter,
     required this.feedback,
@@ -22,6 +23,7 @@ class MultiLetterMatchingExercise extends Exercise {
   final List<String> letterOptions;
   final List<String?> selectedAnswers;
   final int? selectedSignIndex;
+  final String? selectedLetter;
   final int? incorrectSignIndex;
   final String? incorrectLetter;
   final String? feedback;
@@ -47,9 +49,11 @@ class MultiLetterMatchingExercise extends Exercise {
         const SizedBox(height: 12),
         Text(
           feedback ??
-              (selectedIndex == null
-                  ? 'Select a sign, then select its letter.'
-                  : 'Choose the letter for the selected sign.'),
+              (selectedIndex != null
+                  ? 'Choose the letter for the selected sign.'
+                  : selectedLetter != null
+                      ? 'Choose the sign for the selected letter.'
+                      : 'Select a sign or letter to start.'),
           textAlign: TextAlign.center,
           style: TextStyle(
             color: feedback == null
@@ -143,9 +147,7 @@ class MultiLetterMatchingExercise extends Exercise {
                       color: _letterTileColor(letter, colors),
                       child: InkWell(
                         key: ValueKey('matching-letter-$letter'),
-                        onTap: answered ||
-                                selectedIndex == null ||
-                                selectedAnswers.contains(letter)
+                        onTap: answered || selectedAnswers.contains(letter)
                             ? null
                             : () => onLetterSelected(letter),
                         child: Container(
@@ -153,12 +155,10 @@ class MultiLetterMatchingExercise extends Exercise {
                           width: 72,
                           decoration: BoxDecoration(
                             border: Border.all(
-                              color: incorrectLetter == letter
-                                  ? practiceIncorrectColor
-                                  : selectedIndex != null &&
-                                          selectedAnswers[selectedIndex] ==
-                                              letter
-                                      ? colors.primary
+                              color: selectedLetter == letter
+                                  ? colors.primary
+                                  : incorrectLetter == letter
+                                      ? practiceIncorrectColor
                                       : selectedAnswers.contains(letter)
                                           ? practiceCorrectColor
                                           : Colors.transparent,
@@ -197,6 +197,7 @@ class MultiLetterMatchingExercise extends Exercise {
   }
 
   Color? _letterTileColor(String letter, ColorScheme colors) {
+    if (selectedLetter == letter) return colors.secondaryContainer;
     if (incorrectLetter == letter) {
       return practiceIncorrectColor.withValues(alpha: 0.12);
     }
