@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flame/flame.dart';
 import 'package:flame/components.dart';
@@ -38,7 +39,6 @@ class Menu extends World {
   final void Function() onProfilePressed;
   final void Function() onToKitchenPressed;
   final void Function(Map<String, Vector2> positions) onRoomPositionsLoaded;
-  late TiledComponent menu;
 
   @override
   Future<void> onLoad() async {
@@ -46,12 +46,16 @@ class Menu extends World {
     final tileMap = await RenderableTiledMap.fromString(
       sanitizeMenuTmx(tmx),
       Vector2.all(16),
+      // flame_tiled's default layer paint is anti-aliased, which softens every
+      // tile quad's edges and lets the background show through as thin seams.
+      layerPaintFactory: (opacity) => Paint()
+        ..color = Color.fromRGBO(255, 255, 255, opacity)
+        ..isAntiAlias = false
+        ..filterQuality = FilterQuality.none,
     );
-    menu = TiledComponent(tileMap);
-
-    add(menu);
+    add(await _bakeMap(tileMap));
     final positionsLayer =
-        menu.tileMap.map.layerByName('Positions') as ObjectGroup;
+        tileMap.map.layerByName('Positions') as ObjectGroup;
     final roomPositions = {
       for (final object in positionsLayer.objects)
         if (object.isPoint) object.name: Vector2(object.x, object.y),
@@ -62,13 +66,13 @@ class Menu extends World {
     onRoomPositionsLoaded(roomPositions);
 
     final buttonLayer =
-        menu.tileMap.map.layerByName('MenuButtons') as ObjectGroup;
+        tileMap.map.layerByName('MenuButtons') as ObjectGroup;
     final gragasObject = buttonLayer.objects.singleWhere(
       (object) => object.name == 'gragas_button',
     );
     add(
       GragasMapButton(
-        position: Vector2(gragasObject.x, gragasObject.y),
+        position: Vector2(gragasObject.x, gragasObject.y)..round(),
         label: 'Practice',
         onPressed: onGragasPressed,
       ),
@@ -137,5 +141,29 @@ class Menu extends World {
     );
 
     await super.onLoad();
+  }
+
+  /// Renders every tile layer once, at 1 texel per world unit, into a single
+  /// image. Drawing hundreds of separate tile quads under a scaled camera can
+  /// leave hairline gaps between neighbouring tiles; one image cannot.
+  /// The map has no animated tiles, so a static snapshot is equivalent.
+  Future<SpriteComponent> _bakeMap(RenderableTiledMap tileMap) async {
+    final map = tileMap.map;
+    final width = map.width * map.tileWidth;
+    final height = map.height * map.tileHeight;
+
+    final recorder = PictureRecorder();
+    tileMap.render(Canvas(recorder));
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(width, height);
+    picture.dispose();
+
+    return SpriteComponent(
+      sprite: Sprite(image),
+      size: Vector2(width.toDouble(), height.toDouble()),
+      paint: Paint()
+        ..isAntiAlias = false
+        ..filterQuality = FilterQuality.none,
+    );
   }
 }

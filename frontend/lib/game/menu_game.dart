@@ -27,7 +27,6 @@ class MenuGame extends FlameGame with DragCallbacks {
   }
 
   static const _roomViewWidth = 700.0;
-  static const _tileSize = 16.0;
   static const _swipeThreshold = 48.0;
   static const _roomTransitionDuration = 0.35;
 
@@ -159,11 +158,11 @@ class MenuGame extends FlameGame with DragCallbacks {
     }
     final pixelRatio = _devicePixelRatio;
     final desiredZoom = canvasSize.x / _roomViewWidth;
-    final tilePixels = math.max(
-      1,
-      (desiredZoom * _tileSize * pixelRatio).round(),
-    );
-    return tilePixels / (_tileSize * pixelRatio);
+    // Snap so one source texel maps to a whole number of physical pixels.
+    // Otherwise pixel-art texels get uneven sizes and sprites look blurry or
+    // mismatched compared to each other.
+    final texelPixels = math.max(1, (desiredZoom * pixelRatio).round());
+    return texelPixels / pixelRatio;
   }
 
   Vector2 _pixelAlignedPosition(Vector2 position, Vector2 canvasSize) {

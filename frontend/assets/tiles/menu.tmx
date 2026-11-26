@@ -5944,8 +5944,17 @@
    </objectgroup>
   </tile>
  </tileset>
- <tileset firstgid="8209" name="Atlas_Props_Interiors" tilewidth="16" tileheight="16" tilecount="11200" columns="35">
-  <image source="../images/Props/Atlas/Props_Interiors.png" width="560" height="5120"/>
+ <tileset firstgid="8209" name="Atlas_Props_Interiors_1" tilewidth="16" tileheight="16" tilecount="2800" columns="35">
+  <image source="../images/Props/Atlas/Props_Interiors_1.png" width="560" height="1280"/>
+ </tileset>
+ <tileset firstgid="11009" name="Atlas_Props_Interiors_2" tilewidth="16" tileheight="16" tilecount="2800" columns="35">
+  <image source="../images/Props/Atlas/Props_Interiors_2.png" width="560" height="1280"/>
+ </tileset>
+ <tileset firstgid="13809" name="Atlas_Props_Interiors_3" tilewidth="16" tileheight="16" tilecount="2800" columns="35">
+  <image source="../images/Props/Atlas/Props_Interiors_3.png" width="560" height="1280"/>
+ </tileset>
+ <tileset firstgid="16609" name="Atlas_Props_Interiors_4" tilewidth="16" tileheight="16" tilecount="2800" columns="35">
+  <image source="../images/Props/Atlas/Props_Interiors_4.png" width="560" height="1280"/>
  </tileset>
  <tileset firstgid="19409" name="Gragas32-Sheet" tilewidth="48" tileheight="48" tilecount="150" columns="25">
   <image source="../images/Character/Gragas32-Sheet.png" width="1200" height="288"/>

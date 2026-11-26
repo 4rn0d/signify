@@ -16,7 +16,12 @@ class GragasMapButton extends SpriteAnimationGroupComponent<GragasAnimation>
           size: Vector2.all(48),
           anchor: Anchor.center,
           current: GragasAnimation.idle,
-        );
+        ) {
+    // Render like the tilemap: crisp nearest-neighbour pixels, no smoothing.
+    paint
+      ..isAntiAlias = false
+      ..filterQuality = FilterQuality.none;
+  }
 
   final String label;
   final VoidCallback onPressed;
